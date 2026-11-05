@@ -7,3 +7,8 @@ ios/
 .env.*
 !.env.example
 *.log
+.venv/
+__pycache__/
+*.pyc
+data/
+.pytest_cache/

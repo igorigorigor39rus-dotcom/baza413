@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f6f7f0" />
+    <title>Лапы на карте</title>
+    <link rel="icon" href="/static/assets/paw.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+    <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+    <script src="/static/app.js" type="module"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <p class="eyebrow">ЛАПЫ НА КАРТЕ</p>
+          <h1>Большой мир.<br />Маленькие лапы.</h1>
+        </div>
+        <button
+          id="profile-button"
+          class="avatar-button"
+          aria-label="Мой питомец"
+          disabled
+        >
+          🐾
+        </button>
+      </header>
+      <div id="mode-banner" class="mode-banner" hidden>
+        ДЕМОНСТРАЦИЯ · отдельная база · без входа в Telegram
+      </div>
+      <section class="map-wrap" aria-label="Карта территорий">
+        <div id="map"></div>
+        <div class="map-label">
+          <span class="live-dot"></span
+          ><span id="area-label">Открывайте новые места</span>
+        </div>
+        <button
+          id="locate-button"
+          class="locate-button"
+          aria-label="Найти меня"
+        >
+          ⌖
+        </button>
+        <div id="map-warning" class="map-warning" hidden>
+          Карта не загрузилась. Проверьте интернет: маршруты и кнопки работают
+          отдельно от подложки.
+        </div>
+      </section>
+      <section class="walk-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">КАЖДАЯ ПРОГУЛКА — ОТКРЫТИЕ</p>
+            <h2 id="walk-title">Начнём знакомство?</h2>
+          </div>
+          <span class="paw">🐾</span>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite">
+          Загружаем приложение…
+        </p>
+        <div id="walk-stats" class="stats" hidden>
+          <span>Путь <strong id="distance">0 м</strong></span
+          ><span>До старта <strong id="gap">0 м</strong></span
+          ><span>GPS <strong id="accuracy">—</strong></span>
+        </div>
+        <button id="start-button" class="primary" disabled>
+          Начать захват <span>↗</span>
+        </button>
+        <button id="capture-button" class="primary" hidden>
+          Захватить территорию <span>✓</span>
+        </button>
+        <button id="demo-button" class="secondary" hidden>
+          Пройти демомаршрут
+        </button>
+        <button id="cancel-button" class="text-button" hidden>
+          Отменить прогулку
+        </button>
+        <button id="retry-button" class="secondary" hidden>
+          Повторить подключение
+        </button>
+        <p class="hint">
+          Замкните маршрут в пределах 5 м от старта. Гуляйте только там, где это
+          разрешено.
+        </p>
+      </section>
+      <footer>Собираем впечатления, а не километры <span>✦</span></footer>
+    </main>
+
+    <dialog id="profile-dialog">
+      <form id="profile-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">ВАШ НАПАРНИК</p>
+            <h2>Профиль питомца</h2>
+          </div>
+          <button
+            type="button"
+            class="close-button"
+            id="close-profile"
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
+        </div>
+        <p class="muted">
+          Фото и описание будут видны другим участникам на карте.
+        </p>
+        <label class="photo-picker"
+          ><img
+            id="photo-preview"
+            src="/static/assets/paw.svg"
+            alt="Фото питомца" /><span
+            >Добавить или заменить фото<input
+              id="photo-input"
+              name="photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp" /></span
+        ></label>
+        <label
+          >Кличка<input
+            name="name"
+            id="pet-name"
+            maxlength="40"
+            required
+            placeholder="Например, Ричи"
+        /></label>
+        <label
+          >Возраст, лет<input
+            name="age"
+            id="pet-age"
+            type="number"
+            min="0"
+            max="35"
+            step="0.1"
+            required
+            placeholder="3"
+        /></label>
+        <label
+          >О питомце<textarea
+            name="description"
+            id="pet-description"
+            maxlength="400"
+            rows="3"
+            placeholder="Характер, любимые игры, особенности"
+          ></textarea>
+        </label>
+        <fieldset>
+          <legend>Цвет вашей территории</legend>
+          <div class="colors">
+            <label class="swatch green"
+              ><input type="radio" name="color" value="#397C63" checked /><span
+                >✓</span
+              ></label
+            >
+            <label class="swatch blue"
+              ><input type="radio" name="color" value="#527DE0" /><span
+                >✓</span
+              ></label
+            >
+            <label class="swatch purple"
+              ><input type="radio" name="color" value="#B66ACC" /><span
+                >✓</span
+              ></label
+            >
+            <label class="swatch gold"
+              ><input type="radio" name="color" value="#E9A33B" /><span
+                >✓</span
+              ></label
+            >
+            <label class="swatch pink"
+              ><input type="radio" name="color" value="#D85B67" /><span
+                >✓</span
+              ></label
+            >
+            <label class="swatch teal"
+              ><input type="radio" name="color" value="#4CA5AB" /><span
+                >✓</span
+              ></label
+            >
+          </div>
+        </fieldset>
+        <p id="profile-error" class="error" role="alert"></p>
+        <button type="submit" id="save-profile" class="primary">
+          Сохранить профиль <span>✓</span>
+        </button>
+      </form>
+    </dialog>
+    <dialog id="owner-dialog">
+      <div class="owner-card">
+        <button class="close-button" id="close-owner" aria-label="Закрыть">
+          ×</button
+        ><img id="owner-photo" alt="Фото владельца территории" />
+        <p class="eyebrow">ХОЗЯИН ЭТОЙ ТЕРРИТОРИИ</p>
+        <h2 id="owner-name"></h2>
+        <p id="owner-description"></p>
+        <button id="owner-done" class="secondary">Вернуться на карту</button>
+      </div>
+    </dialog>
+  </body>
+</html>
