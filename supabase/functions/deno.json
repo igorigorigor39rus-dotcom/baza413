@@ -1,0 +1,9 @@
+{
+  "compilerOptions": { "strict": true, "lib": ["deno.window", "dom"] },
+  "nodeModulesDir": "none",
+  "lock": true,
+  "tasks": {
+    "check": "deno check paws-api/index.ts",
+    "test": "deno test paws-api"
+  }
+}

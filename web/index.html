@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
@@ -8,12 +8,18 @@
     />
     <meta name="theme-color" content="#f6f7f0" />
     <title>Лапы на карте</title>
-    <link rel="icon" href="/static/assets/paw.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/static/style.css" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://fywsqxijebneqkxusgro.supabase.co; base-uri 'self'; form-action 'self'; object-src 'none'"
+    />
+    <link rel="icon" href="./assets/paw.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="./style.css" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-    <script src="/static/vendor/leaflet/leaflet.js" defer></script>
-    <script src="/static/app.js" type="module"></script>
+    <script src="./vendor/leaflet/leaflet.js" defer></script>
+    <script src="./vendor/polygon-clipping/polygon-clipping.js" defer></script>
+    <script src="./app.js" type="module"></script>
   </head>
   <body>
     <main class="app">
@@ -32,13 +38,13 @@
         </button>
       </header>
       <div id="mode-banner" class="mode-banner" hidden>
-        ДЕМОНСТРАЦИЯ · отдельная база · без входа в Telegram
+        ДЕМО НА ЭТОМ УСТРОЙСТВЕ · без Telegram
       </div>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
         <div class="map-label">
-          <span class="live-dot"></span
-          ><span id="area-label">Открывайте новые места</span>
+          <span class="live-dot"></span><span id="area-label"
+          >Открывайте новые места</span>
         </div>
         <button
           id="locate-button"
@@ -64,9 +70,9 @@
           Загружаем приложение…
         </p>
         <div id="walk-stats" class="stats" hidden>
-          <span>Путь <strong id="distance">0 м</strong></span
-          ><span>До старта <strong id="gap">0 м</strong></span
-          ><span>GPS <strong id="accuracy">—</strong></span>
+          <span>Путь <strong id="distance">0 м</strong></span><span>До старта
+            <strong id="gap">0 м</strong></span><span>GPS <strong id="accuracy"
+            >—</strong></span>
         </div>
         <button id="start-button" class="primary" disabled>
           Начать захват <span>↗</span>
@@ -83,6 +89,7 @@
         <button id="retry-button" class="secondary" hidden>
           Повторить подключение
         </button>
+        <a class="demo-link" href="?demo=1">Посмотреть демо без Telegram</a>
         <p class="hint">
           Замкните маршрут в пределах 5 м от старта. Гуляйте только там, где это
           разрешено.
@@ -110,27 +117,24 @@
         <p class="muted">
           Фото и описание будут видны другим участникам на карте.
         </p>
-        <label class="photo-picker"
-          ><img
+        <label class="photo-picker"><img
             id="photo-preview"
-            src="/static/assets/paw.svg"
-            alt="Фото питомца" /><span
-            >Добавить или заменить фото<input
+            src="./assets/paw.svg"
+            alt="Фото питомца"
+          /><span>Добавить или заменить фото<input
               id="photo-input"
               name="photo"
               type="file"
-              accept="image/jpeg,image/png,image/webp" /></span
-        ></label>
-        <label
-          >Кличка<input
+              accept="image/jpeg,image/png,image/webp"
+            /></span></label>
+        <label>Кличка<input
             name="name"
             id="pet-name"
             maxlength="40"
             required
             placeholder="Например, Ричи"
-        /></label>
-        <label
-          >Возраст, лет<input
+          /></label>
+        <label>Возраст, лет<input
             name="age"
             id="pet-age"
             type="number"
@@ -139,9 +143,8 @@
             step="0.1"
             required
             placeholder="3"
-        /></label>
-        <label
-          >О питомце<textarea
+          /></label>
+        <label>О питомце<textarea
             name="description"
             id="pet-description"
             maxlength="400"
@@ -152,36 +155,37 @@
         <fieldset>
           <legend>Цвет вашей территории</legend>
           <div class="colors">
-            <label class="swatch green"
-              ><input type="radio" name="color" value="#397C63" checked /><span
-                >✓</span
-              ></label
-            >
-            <label class="swatch blue"
-              ><input type="radio" name="color" value="#527DE0" /><span
-                >✓</span
-              ></label
-            >
-            <label class="swatch purple"
-              ><input type="radio" name="color" value="#B66ACC" /><span
-                >✓</span
-              ></label
-            >
-            <label class="swatch gold"
-              ><input type="radio" name="color" value="#E9A33B" /><span
-                >✓</span
-              ></label
-            >
-            <label class="swatch pink"
-              ><input type="radio" name="color" value="#D85B67" /><span
-                >✓</span
-              ></label
-            >
-            <label class="swatch teal"
-              ><input type="radio" name="color" value="#4CA5AB" /><span
-                >✓</span
-              ></label
-            >
+            <label class="swatch green"><input
+                type="radio"
+                name="color"
+                value="#397C63"
+                checked
+              /><span>✓</span></label>
+            <label class="swatch blue"><input
+                type="radio"
+                name="color"
+                value="#527DE0"
+              /><span>✓</span></label>
+            <label class="swatch purple"><input
+                type="radio"
+                name="color"
+                value="#B66ACC"
+              /><span>✓</span></label>
+            <label class="swatch gold"><input
+                type="radio"
+                name="color"
+                value="#E9A33B"
+              /><span>✓</span></label>
+            <label class="swatch pink"><input
+                type="radio"
+                name="color"
+                value="#D85B67"
+              /><span>✓</span></label>
+            <label class="swatch teal"><input
+                type="radio"
+                name="color"
+                value="#4CA5AB"
+              /><span>✓</span></label>
           </div>
         </fieldset>
         <p id="profile-error" class="error" role="alert"></p>
@@ -193,8 +197,8 @@
     <dialog id="owner-dialog">
       <div class="owner-card">
         <button class="close-button" id="close-owner" aria-label="Закрыть">
-          ×</button
-        ><img id="owner-photo" alt="Фото владельца территории" />
+          ×
+        </button><img id="owner-photo" alt="Фото владельца территории" />
         <p class="eyebrow">ХОЗЯИН ЭТОЙ ТЕРРИТОРИИ</p>
         <h2 id="owner-name"></h2>
         <p id="owner-description"></p>

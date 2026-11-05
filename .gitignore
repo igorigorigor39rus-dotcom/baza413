@@ -12,3 +12,8 @@ __pycache__/
 *.pyc
 data/
 .pytest_cache/
+.tools/
+supabase/.temp/
+supabase/.branches/
+supabase/.env.local
+site/

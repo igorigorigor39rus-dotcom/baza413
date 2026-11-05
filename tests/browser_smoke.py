@@ -22,7 +22,7 @@ def main():
         context.route('https://tile.openstreetmap.org/**',lambda route: route.fulfill(content_type='image/png',body=tile))
         page=context.new_page();errors=[]
         page.on('pageerror',lambda error:errors.append(str(error)))
-        page.goto(os.getenv('SMOKE_URL','http://127.0.0.1:8000'),wait_until='networkidle')
+        page.goto(os.getenv('SMOKE_URL','http://127.0.0.1:8000/?backend=python'),wait_until='networkidle')
         assert page.locator('#mode-banner').is_visible()
         if not page.locator('#profile-dialog').is_visible(): page.locator('#profile-button').click()
         page.locator('#pet-name').fill('Ричи')

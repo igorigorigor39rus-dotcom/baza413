@@ -257,6 +257,7 @@ def create_app(settings: Settings | None = None):
     # Фото публичны по непредсказуемому адресу, как и карточки владельцев на карте.
     app.mount('/photos', StaticFiles(directory=settings.photos, check_dir=False), name='photos')
     app.mount('/static', StaticFiles(directory=ROOT / 'web'), name='static')
+    app.mount('/', StaticFiles(directory=ROOT / 'web'), name='frontend')
     return app
 
 

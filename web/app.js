@@ -1,9 +1,20 @@
-import { goodFix, shouldAppend, meters, length } from "./tracking.mjs";
+import { goodFix, length, meters, shouldAppend } from "./tracking.mjs";
 import { createLocationSource } from "./location.mjs";
+import { createClient } from "./client.mjs";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
-// user.id сервер не верит: подпись проверяется в backend/auth.py.
+// user.id сервер не верит: подпись проверяется в Supabase Edge Function.
 const telegram = window.Telegram?.WebApp;
+const client = createClient({
+  location: window.location,
+  storage: {
+    getItem: (key) => window.localStorage.getItem(key),
+    setItem: (key, value) => window.localStorage.setItem(key, value),
+  },
+  clipping: window.polygonClipping,
+  fetch: window.fetch.bind(window),
+});
+const PAW = new URL("./assets/paw.svg", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -36,20 +47,7 @@ async function api(path, options = {}) {
       : {}),
     ...options.headers,
   };
-  const response = await fetch(path, { ...options, headers });
-  let data;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error("Сервер вернул неожиданный ответ. Повторите подключение.");
-  }
-  if (!response.ok)
-    throw new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : "Проверьте заполненные поля и GPS-данные.",
-    );
-  return data;
+  return client.api(path, { ...options, headers });
 }
 const json = (body) => ({ "Content-Type": "application/json" });
 function message(text) {
@@ -62,52 +60,53 @@ function busy(value) {
 }
 function avatar(pet) {
   const img = document.createElement("img");
-  img.src = pet.photo || "/static/assets/paw.svg";
+  img.src = pet.photo || PAW;
   img.alt = pet.name;
   img.addEventListener("error", () => {
-    if (!img.src.endsWith("/static/assets/paw.svg"))
-      img.src = "/static/assets/paw.svg";
+    if (img.src !== PAW) img.src = PAW;
   });
   return img;
 }
 function render() {
   const walking = Boolean(state.walk);
-  $("start-button").hidden = walking;
+  $("start-button").hidden = walking ||
+    (state.config?.localDemo && Boolean(state.pet));
   $("start-button").disabled = state.busy || !state.connected;
   $("start-button").firstChild.textContent = state.starting
     ? "Подключаем GPS… "
     : state.pet
-      ? "Начать захват "
-      : "Создать профиль питомца ";
+    ? "Начать захват "
+    : "Создать профиль питомца ";
   $("capture-button").hidden = !walking;
-  const fresh =
-    state.latest && Date.now() / 1000 - state.latest.timestamp <= 15;
-  $("capture-button").disabled =
-    state.busy ||
+  const fresh = state.latest &&
+    Date.now() / 1000 - state.latest.timestamp <= 15;
+  $("capture-button").disabled = state.busy ||
     (state.walk?.demo
       ? state.route.length < state.config.demoRoute.length
       : !fresh || state.route.length < 4);
   $("cancel-button").hidden = !walking;
   $("cancel-button").disabled = state.busy;
-  $("demo-button").hidden =
-    !state.config?.demoMode || !state.pet || (walking && !state.walk.demo);
-  $("demo-button").disabled =
-    state.busy ||
+  $("demo-button").hidden = !state.config?.demoMode || !state.pet ||
+    (walking && !state.walk.demo);
+  $("demo-button").disabled = state.busy ||
     (state.walk?.demo && state.route.length >= state.config.demoRoute.length);
   $("demo-button").textContent = state.walk?.demo
     ? `Следующая точка · ${state.route.length}/${state.config.demoRoute.length}`
     : "Пройти демомаршрут";
-  $("profile-button").disabled =
-    !state.connected || walking || state.busy || state.starting;
+  $("profile-button").disabled = !state.connected || walking || state.busy ||
+    state.starting;
   $("walk-stats").hidden = !walking;
   $("walk-title").textContent = walking
     ? "Идём за новыми открытиями"
     : state.pet
-      ? `На прогулку, ${state.pet.name}?`
-      : "Начнём знакомство?";
+    ? `На прогулку, ${state.pet.name}?`
+    : "Начнём знакомство?";
   $("distance").textContent = `${Math.round(length(state.route))} м`;
-  $("gap").textContent =
-    `${Math.round(state.route.length ? meters(state.route[0], state.route.at(-1)) : 0)} м`;
+  $("gap").textContent = `${
+    Math.round(
+      state.route.length ? meters(state.route[0], state.route.at(-1)) : 0,
+    )
+  } м`;
   $("accuracy").textContent = state.latest
     ? `±${Math.round(state.latest.accuracy)} м`
     : "—";
@@ -139,10 +138,11 @@ function initMap() {
   map.on("moveend", () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (state.connected)
+      if (state.connected) {
         refreshMap().catch(() =>
-          message("Не удалось обновить карту. Проверьте соединение."),
+          message("Не удалось обновить карту. Проверьте соединение.")
         );
+      }
     }, 300);
   });
 }
@@ -180,10 +180,11 @@ async function refreshMap() {
       .on("click", () => showOwner(pet))
       .addTo(territoriesLayer);
   }
-  if (data.truncated)
+  if (data.truncated) {
     message(
       "В этой области больше 200 участков. Приблизьте карту, чтобы увидеть остальные.",
     );
+  }
 }
 async function refreshMe() {
   const data = await api("/api/me");
@@ -200,6 +201,14 @@ async function boot() {
   $("retry-button").hidden = true;
   try {
     initMap();
+    if (!client.isDemo && !client.isPython && !telegram?.initData) {
+      message(
+        "Откройте приложение через кнопку вашего Telegram-бота. Для знакомства с картой доступно локальное демо по ссылке ниже.",
+      );
+      state.connected = false;
+      render();
+      return;
+    }
     state.config = await api("/api/config");
     $("mode-banner").hidden = !state.config.demoMode;
     await refreshMe();
@@ -207,7 +216,7 @@ async function boot() {
     await refreshMap();
     message(
       state.config.demoMode
-        ? "Это демо с общей тестовой базой. Попробуйте перезахватить участок Бублика без GPS."
+        ? "Это демо на этом устройстве. Попробуйте перезахватить участок Бублика без GPS."
         : "Обойдите участок и вернитесь к старту. Во время прогулки оставляйте мини-приложение открытым.",
     );
     render();
@@ -231,7 +240,7 @@ function editProfile() {
       (input) => (input.checked = input.value === (p?.color || "#397C63")),
     );
   $("photo-input").value = "";
-  $("photo-preview").src = p?.photo || "/static/assets/paw.svg";
+  $("photo-preview").src = p?.photo || PAW;
   $("profile-error").textContent = "";
   $("profile-dialog").showModal();
 }
@@ -261,7 +270,7 @@ $("profile-form").addEventListener("submit", async (event) => {
     saved = true;
     if (photo) {
       const form = new FormData();
-      form.append("file", photo);
+      form.append("file", await preparePhoto(photo), "pet.jpg");
       await api("/api/me/photo", { method: "POST", body: form });
     }
     await refreshMe();
@@ -269,11 +278,12 @@ $("profile-form").addEventListener("submit", async (event) => {
     $("profile-dialog").close();
     message("Профиль сохранён. Можно отправляться за новыми территориями!");
   } catch (error) {
-    $("profile-error").textContent =
-      (saved
-        ? "Профиль уже сохранён, но не удалось завершить обновление: "
-        : "") + error.message;
-    if (saved) await refreshMe().catch(() => {});
+    $("profile-error").textContent = (saved
+      ? "Профиль уже сохранён, но не удалось завершить обновление: "
+      : "") + error.message;
+    if (saved) {
+      await refreshMe().catch(() => {});
+    }
   } finally {
     busy(false);
   }
@@ -286,12 +296,43 @@ $("photo-input").addEventListener("change", () => {
     $("photo-preview").src = state.previewUrl;
   }
 });
+async function preparePhoto(file) {
+  // Canvas уменьшает исходник и убирает EXIF. Edge Function повторно декодирует
+  // JPEG: сервер не доверяет ни расширению файла, ни присланному Content-Type.
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    if (image.naturalWidth * image.naturalHeight > 20_000_000) {
+      throw new Error("Выберите фото до 20 мегапикселей.");
+    }
+    const scale = Math.min(
+      1,
+      512 / Math.max(image.naturalWidth, image.naturalHeight),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    context.fillStyle = "white";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.85)
+    );
+    if (!blob) throw new Error("Не удалось обработать фотографию.");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 function showOwner(pet) {
-  $("owner-photo").src = pet.photo || "/static/assets/paw.svg";
+  $("owner-photo").src = pet.photo || PAW;
   $("owner-photo").style.borderColor = pet.color;
   $("owner-name").textContent = `${pet.name} · ${pet.age} лет`;
-  $("owner-description").textContent =
-    pet.description || "Любит гулять и открывать новые места.";
+  $("owner-description").textContent = pet.description ||
+    "Любит гулять и открывать новые места.";
   if (!$("owner-dialog").open) $("owner-dialog").showModal();
 }
 
@@ -314,7 +355,7 @@ function drawRoute() {
     map.removeLayer(startMarker);
     startMarker = null;
   }
-  if (state.route.length)
+  if (state.route.length) {
     startMarker = L.circleMarker(
       [state.route[0].latitude, state.route[0].longitude],
       {
@@ -327,6 +368,7 @@ function drawRoute() {
     )
       .bindTooltip("Старт")
       .addTo(map);
+  }
   render();
 }
 async function keepAwake() {
@@ -345,10 +387,11 @@ function stopWalk({ notify = true } = {}) {
   state.walk = null;
   state.route = [];
   state.latest = null;
-  if (walk && !walk.demo && notify)
+  if (walk && !walk.demo && notify) {
     api(`/api/walks/${walk.id}`, { method: "DELETE", keepalive: true }).catch(
       () => {},
     );
+  }
   if (state.wake) state.wake.release().catch(() => {});
   state.wake = null;
   telegram?.disableClosingConfirmation?.();
@@ -374,7 +417,7 @@ function onPosition(position, generation) {
     drawRoute();
   }
   if (positionMarker) positionMarker.setLatLng([p.latitude, p.longitude]);
-  else
+  else {
     positionMarker = L.circleMarker([p.latitude, p.longitude], {
       radius: 6,
       color: "white",
@@ -382,9 +425,12 @@ function onPosition(position, generation) {
       fillColor: "#527de0",
       fillOpacity: 1,
     }).addTo(map);
+  }
   if (state.route.length === 1) map.setView([p.latitude, p.longitude], 17);
   message(
-    `Записываем прогулку · GPS ±${Math.round(p.accuracy)} м. Вернитесь к старту в пределах 5 м.`,
+    `Записываем прогулку · GPS ±${
+      Math.round(p.accuracy)
+    } м. Вернитесь к старту в пределах 5 м.`,
   );
   render();
 }
@@ -400,10 +446,11 @@ async function startWalk() {
   try {
     const position = await currentPosition();
     if (generation !== state.generation) return;
-    if (!goodFix(positionSample(position)))
+    if (!goodFix(positionSample(position))) {
       throw new Error(
         "GPS пока неточный. Выйдите на открытое место и повторите.",
       );
+    }
     const walk = await api("/api/walks", { method: "POST" });
     if (generation !== state.generation) {
       api(`/api/walks/${walk.id}`, { method: "DELETE" }).catch(() => {});
@@ -412,8 +459,9 @@ async function startWalk() {
     state.walk = walk;
     state.route = [];
     state.latest = null;
-    if (position.timestamp / 1000 >= walk.startedAt - 5)
+    if (position.timestamp / 1000 >= walk.startedAt - 5) {
       onPosition(position, generation);
+    }
     telegram?.enableClosingConfirmation?.();
     void keepAwake();
     const cleanup = await locationSource.watchPosition(
@@ -447,8 +495,9 @@ function demoStep() {
     state.latest = null;
     map.setView([54.7104, 20.4522], 16);
   }
-  if (!state.walk.demo || state.route.length >= state.config.demoRoute.length)
+  if (!state.walk.demo || state.route.length >= state.config.demoRoute.length) {
     return;
+  }
   const [longitude, latitude] = state.config.demoRoute[state.route.length];
   const p = { longitude, latitude, accuracy: 3, timestamp: Date.now() / 1000 };
   state.route.push(p);
@@ -467,24 +516,26 @@ async function capture() {
   try {
     let points = state.route;
     if (!walk.demo) {
-      if (!state.latest || Date.now() / 1000 - state.latest.timestamp > 15)
+      if (!state.latest || Date.now() / 1000 - state.latest.timestamp > 15) {
         throw new Error("Дождитесь свежего точного GPS.");
-      if (state.latest.timestamp > points.at(-1).timestamp)
+      }
+      if (state.latest.timestamp > points.at(-1).timestamp) {
         points = [...points, state.latest];
+      }
     }
     const result = await api(walk.demo ? "/api/demo/capture" : "/api/capture", {
       method: "POST",
-      ...(walk.demo
-        ? {}
-        : {
-            headers: json(),
-            body: JSON.stringify({ walk_id: walk.id, points }),
-          }),
+      ...(walk.demo ? {} : {
+        headers: json(),
+        body: JSON.stringify({ walk_id: walk.id, points }),
+      }),
     });
     stopWalk({ notify: false });
     // Захват уже сохранён. Ошибка обновления карты не должна выглядеть как отказ захвата.
     message(
-      `Территория ваша! Захвачено ${Math.round(result.area)} м². Нажмите на фото владельца на карте.`,
+      `Территория ваша! Захвачено ${
+        Math.round(result.area)
+      } м². Нажмите на фото владельца на карте.`,
     );
     telegram?.HapticFeedback?.notificationOccurred("success");
     try {
@@ -492,7 +543,9 @@ async function capture() {
       await refreshMap();
     } catch {
       message(
-        `Захват ${Math.round(result.area)} м² сохранён, но карта не обновилась. Перезапустите приложение.`,
+        `Захват ${
+          Math.round(result.area)
+        } м² сохранён, но карта не обновилась. Перезапустите приложение.`,
       );
     }
   } catch (error) {

@@ -1,0 +1,6 @@
+project_id = "baza413"
+
+# Telegram initData и webhook проверяются внутри функции. JWT Supabase Auth здесь
+# не используется; отключение gateway-проверки не отменяет нашу аутентификацию.
+[functions.paws-api]
+verify_jwt = false
