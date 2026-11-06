@@ -444,7 +444,7 @@ legend {
 .owner-card .close-button {
   align-self: flex-end;
 }
-.owner-card > img {
+#owner-photo {
   width: 90px;
   height: 90px;
   object-fit: cover;
@@ -936,4 +936,87 @@ footer span {
 }
 #chat-messages {
   scrollbar-gutter: stable;
+}
+
+/* Фото в рейтинге и досье открывается отдельно, не меняя навигацию по имени. */
+.photo-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.ranking-agent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ranking-photo img {
+  width: 38px;
+  height: 38px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+}
+.ranking-agent .text-button {
+  overflow-wrap: anywhere;
+}
+#photo-dialog {
+  width: min(96vw, 900px);
+  max-width: 96vw;
+  padding: 16px;
+}
+#large-photo {
+  display: block;
+  width: 100%;
+  max-height: 78dvh;
+  object-fit: contain;
+}
+.purchase-section {
+  padding: 16px 24px 0;
+}
+#purchase-panel {
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+#purchase-status {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.purchase-tools, .ranking-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+.purchase-tools button, .ranking-tabs button {
+  flex: 1;
+  padding: 9px;
+}
+.ranking-tabs button {
+  background: #303741;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.ranking-tabs [aria-selected="true"] {
+  background: #c2cbd8;
+  color: #20242b;
+}
+.purchase-point {
+  background: #c2cbd8;
+  color: #20242b;
+  border: 2px solid #303741;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 24px;
+  font-weight: 700;
+}
+.purchasing {
+  cursor: crosshair;
+}
+h1 span {
+  font-size: 0.78em;
+  letter-spacing: -0.5px;
 }

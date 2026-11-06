@@ -4,16 +4,17 @@ import {
   meters,
   photoSize,
   shouldAppend,
-} from "./tracking.mjs?v=0.5.0";
-import { createLocationSource } from "./location.mjs?v=0.5.0";
-import { createClient } from "./client.mjs?v=0.5.0";
+} from "./tracking.mjs?v=0.6.0";
+import { createLocationSource } from "./location.mjs?v=0.6.0";
+import { createPurchasing } from "./purchasing.mjs?v=0.6.0";
+import { createClient } from "./client.mjs?v=0.6.0";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=0.5.0";
-import { compressPhoto } from "./photo.mjs?v=0.5.0";
+} from "./appearance.mjs?v=0.6.0";
+import { compressPhoto } from "./photo.mjs?v=0.6.0";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -27,7 +28,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=0.5.0", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=0.6.0", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -51,13 +52,17 @@ const state = {
   refreshId: 0,
   wake: null,
   live: null,
+  buying: false,
 };
+// До обновления сервера соблюдаем его прежний порог (15 м).
+const maxAccuracy = () => state.config?.maxAccuracy ?? 15;
 let map,
   territoriesLayer,
   routeLayer,
   startMarker,
   positionMarker,
   liveRouteLayer;
+let purchasing;
 const photoMarkers = [];
 function photoIcon(pet) {
   const size = photoSize(map.getZoom()), image = avatar(pet);
@@ -103,7 +108,7 @@ function render() {
   const walking = Boolean(state.walk);
   $("start-button").hidden = Boolean(state.live) || walking ||
     (state.config?.localDemo && Boolean(state.pet));
-  $("start-button").disabled = state.busy || !state.connected;
+  $("start-button").disabled = state.busy || state.buying || !state.connected;
   $("start-button").firstChild.textContent = state.starting
     ? "Подключаем GPS… "
     : state.pet
@@ -121,18 +126,21 @@ function render() {
   $("demo-button").hidden = Boolean(state.live) || !state.config?.demoMode ||
     !state.pet ||
     (walking && !state.walk.demo);
-  $("demo-button").disabled = state.busy ||
+  $("demo-button").disabled = state.busy || state.buying ||
     (state.walk?.demo && state.route.length >= state.config.demoRoute.length);
   $("demo-button").textContent = state.walk?.demo
     ? `Следующая точка · ${state.route.length}/${state.config.demoRoute.length}`
     : "Пройти демомаршрут";
   $("live-start").hidden = Boolean(state.live);
-  $("live-start").disabled = state.busy || walking || !state.connected ||
+  $("live-start").disabled = state.busy || state.buying || walking ||
+    !state.connected ||
     client.isDemo || !state.config?.features?.liveTracking;
   $("live-note").hidden = client.isDemo || Boolean(state.live);
   $("live-note").textContent = state.config?.features?.liveTracking
-    ? "Отдельный экспериментальный режим через трансляцию геопозиции Telegram. Работа в фоне зависит от телефона и разрешений."
-    : "Режим с выключенным экраном станет доступен после обновления сервера до v.0.5.";
+    ? state.config.features.autoLiveStart
+      ? "Включите трансляцию в чате бота — запись начнётся сама. Работа с выключенным экраном зависит от телефона и разрешений."
+      : "Отдельный режим через трансляцию геопозиции Telegram. Для упрощённого запуска обновите сервер до v.0.6."
+    : "Режим с выключенным экраном станет доступен после обновления сервера.";
   $("live-panel").hidden = !state.live;
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
@@ -157,6 +165,7 @@ function render() {
   $("accuracy").textContent = state.latest
     ? `±${Math.round(state.latest.accuracy)} м`
     : "—";
+  purchasing?.refresh();
 }
 
 function initMap() {
@@ -225,6 +234,21 @@ function initMap() {
       }
     }, 300);
   });
+  purchasing = createPurchasing({
+    map,
+    api,
+    context: () => state,
+    onModeChange: (value) => {
+      state.buying = value;
+      render();
+    },
+    onPurchased: async () => {
+      await refreshMap();
+      await refreshMe();
+      await refreshWallet();
+    },
+    message,
+  });
 }
 async function refreshMap() {
   const id = ++state.refreshId;
@@ -251,12 +275,16 @@ async function refreshMap() {
       onEachFeature: (_feature, layer) =>
         layer.on("add", () => paintPath(layer, pet)),
     })
-      .on("click", () => showOwner(pet))
+      .on("click", () => {
+        if (!state.buying) void showOwner(pet);
+      })
       .addTo(territoriesLayer);
     const marker = L.marker(territory.marker, {
       icon: photoIcon(pet),
       title: pet.name,
-    }).on("click", () => showOwner(pet)).addTo(territoriesLayer);
+    }).on("click", () => {
+      if (!state.buying) void showOwner(pet);
+    }).addTo(territoriesLayer);
     marker.agent = pet;
     photoMarkers.push(marker);
   }
@@ -292,7 +320,11 @@ async function boot() {
     state.config = await api("/api/config");
     $("closure-hint").textContent = `Замкните маршрут не дальше ${
       state.config.closureMeters ?? 15
-    } м от старта. Точность GPS на старте и финише — не хуже 15 м. Гуляйте только там, где это разрешено.`;
+    } м от старта. Точность GPS на старте и финише — не хуже ${maxAccuracy()} м. Пересечения трека ${
+      state.config.features?.crossingRoutes || client.isDemo
+        ? "разрешены: захватывается площадь внутри внешних границ"
+        : "станут доступны после обновления сервера"
+    }. Гуляйте только там, где это разрешено.`;
     $("server-notice").hidden = client.isDemo || client.isPython ||
       Boolean(
         state.config.features?.dossier && state.config.features?.chat &&
@@ -415,6 +447,7 @@ let ownerRequest = 0;
 async function showOwner(pet) {
   const request = ++ownerRequest;
   $("owner-photo").src = pet.photo || PAW;
+  $("owner-photo").alt = pet.name;
   $("owner-photo").style.borderColor = pet.color;
   $("owner-name").textContent = `${pet.name} · ${pet.age} лет`;
   $("owner-description").textContent = pet.description ||
@@ -500,9 +533,11 @@ function stopWalk({ notify = true } = {}) {
 function onPosition(position, generation) {
   if (generation !== state.generation || !state.walk) return;
   const p = positionSample(position);
-  if (!goodFix(p) || Date.now() / 1000 - p.timestamp > 15) {
+  if (!goodFix(p, maxAccuracy()) || Date.now() / 1000 - p.timestamp > 15) {
     state.latest = null;
-    message("Слабый GPS. Выйдите на открытое место: нужна точность до 15 м.");
+    message(
+      `Слабый GPS. Выйдите на открытое место: нужна точность до ${maxAccuracy()} м.`,
+    );
     render();
     return;
   }
@@ -547,9 +582,11 @@ async function startWalk() {
     const position = await currentPosition();
     if (generation !== state.generation) return;
     const fix = positionSample(position);
-    if (!goodFix(fix) || Date.now() / 1000 - fix.timestamp > 15) {
+    if (
+      !goodFix(fix, maxAccuracy()) || Date.now() / 1000 - fix.timestamp > 15
+    ) {
       throw new Error(
-        `Старт требует свежий GPS с погрешностью ≤15 м. Сейчас: ${
+        `Старт требует свежий GPS с погрешностью ≤${maxAccuracy()} м. Сейчас: ${
           Number.isFinite(fix.accuracy)
             ? "±" + Math.round(fix.accuracy) + " м"
             : "точность неизвестна"
@@ -771,7 +808,7 @@ async function refreshChat() {
         head = document.createElement("strong"),
         text = document.createElement("p"),
         time = document.createElement("time");
-      head.textContent = item.pet?.name ?? "Агент";
+      head.textContent = item.pet?.name ?? "Генерал";
       text.textContent = item.text;
       time.textContent = new Date(Number(item.createdAt) * 1000).toLocaleString(
         "ru-RU",
@@ -787,7 +824,7 @@ async function refreshChat() {
     }
     if (!data.messages.length) {
       const p = document.createElement("p");
-      p.textContent = "Пока тихо. Начните разговор с другими агентами.";
+      p.textContent = "Пока тихо. Начните разговор с другими Генералами.";
       fragment.append(p);
     }
     box.replaceChildren(fragment);
@@ -882,7 +919,7 @@ async function refreshLive() {
       }
       $("live-status").textContent = state.live.error ||
         (!last
-          ? "Ждём трансляцию геопозиции с точностью ≤15 м."
+          ? `Ждём трансляцию геопозиции с точностью ≤${maxAccuracy()} м.`
           : `Принято точек: ${points.length}. GPS ±${
             Math.round(last.accuracy)
           } м, ${Math.max(0, Math.round(age))} сек. назад. ${
@@ -910,10 +947,20 @@ $("live-start").addEventListener("click", async () => {
   }
   busy(true);
   try {
+    if (state.config.features?.autoLiveStart) {
+      // Telegram не умеет включать Live Location запросом разрешения. Убираем
+      // отдельный старт GPS: бот начнёт запись по самой трансляции.
+      await api("/api/live/instructions", { method: "POST" });
+      message(
+        "В чате бота включите трансляцию: скрепка → Геопозиция → Транслировать. Запись начнётся сама.",
+      );
+      telegram?.close?.();
+      return;
+    }
     const p = positionSample(await currentPosition());
-    if (!goodFix(p) || Date.now() / 1000 - p.timestamp > 15) {
+    if (!goodFix(p, maxAccuracy()) || Date.now() / 1000 - p.timestamp > 15) {
       throw new Error(
-        "Нужен свежий GPS с точностью ≤15 м. Выйдите на открытое место.",
+        `Нужен свежий GPS с точностью ≤${maxAccuracy()} м. Выйдите на открытое место.`,
       );
     }
     const data = await api("/api/live/start", {
@@ -973,23 +1020,33 @@ $("live-cancel").addEventListener("click", async () => {
 setInterval(() => {
   if (!document.hidden) void refreshLive();
 }, 10000);
-$("open-top").addEventListener("click", async () => {
+let rankingRequest = 0;
+async function loadTop(sort = "bones") {
   if (!state.connected) {
     message("Откройте приложение через бота или включите демо.");
     return;
   }
-  $("top-dialog").showModal();
+  if (!$("top-dialog").open) $("top-dialog").showModal();
+  const request = ++rankingRequest;
+  $("top-bones").setAttribute("aria-selected", String(sort === "bones"));
+  $("top-area").setAttribute("aria-selected", String(sort === "area"));
+  $("top-score").textContent = sort === "area" ? "м²" : "🦴";
+  $("top-description").textContent = sort === "area"
+    ? "По площади всех территорий, которыми Генерал владеет сейчас."
+    : "По текущему балансу 🦴, включая начисления вне приложения.";
   $("top-error").textContent = "Загружаем рейтинг…";
   $("top-body").replaceChildren();
   try {
-    const data = await api("/api/top");
+    const data = await api(sort === "area" ? "/api/top?sort=area" : "/api/top");
+    if (request !== rankingRequest) return;
     let rank = 0;
     for (const entry of data.agents) {
       const row = document.createElement("tr"),
         place = document.createElement("td"),
         name = document.createElement("td"),
         score = document.createElement("td"),
-        button = document.createElement("button");
+        button = document.createElement("button"),
+        photo = document.createElement("button");
       place.textContent = String(++rank);
       button.textContent = entry.pet.name;
       button.className = "text-button";
@@ -997,18 +1054,49 @@ $("open-top").addEventListener("click", async () => {
         $("top-dialog").close();
         void showOwner(entry.pet);
       });
-      name.append(button);
-      score.textContent = Math.floor(Number(entry.wallet.balance))
-        .toLocaleString("ru-RU");
+      photo.className = "photo-button ranking-photo";
+      photo.type = "button";
+      photo.setAttribute("aria-label", `Увеличить фото: ${entry.pet.name}`);
+      photo.append(avatar(entry.pet));
+      photo.addEventListener(
+        "click",
+        () => showPhoto(entry.pet.photo || PAW, entry.pet.name),
+      );
+      const agent = document.createElement("div");
+      agent.className = "ranking-agent";
+      agent.append(photo, button);
+      name.append(agent);
+      score.textContent = sort === "area"
+        ? Number(entry.area).toLocaleString("ru-RU", {
+          maximumFractionDigits: 2,
+        })
+        : Math.floor(Number(entry.wallet.balance)).toLocaleString("ru-RU");
       row.append(place, name, score);
       $("top-body").append(row);
     }
-    $("top-error").textContent = data.agents.length ? "" : "Пока нет агентов.";
+    $("top-error").textContent = data.agents.length
+      ? ""
+      : "Пока нет Генералов.";
   } catch (e) {
-    $("top-error").textContent = e.message;
+    if (request === rankingRequest) $("top-error").textContent = e.message;
   }
-});
+}
+$("open-top").addEventListener("click", () => void loadTop());
+$("top-bones").addEventListener("click", () => void loadTop("bones"));
+$("top-area").addEventListener("click", () => void loadTop("area"));
 $("close-top").addEventListener("click", () => $("top-dialog").close());
+
+function showPhoto(src, name) {
+  $("large-photo").src = src;
+  $("large-photo").alt = name;
+  $("photo-title").textContent = name;
+  $("photo-dialog").showModal();
+}
+$("enlarge-owner-photo").addEventListener(
+  "click",
+  () => showPhoto($("owner-photo").src, $("owner-photo").alt),
+);
+$("close-photo").addEventListener("click", () => $("photo-dialog").close());
 
 function fitChat() {
   if ($("chat-dialog").open) {

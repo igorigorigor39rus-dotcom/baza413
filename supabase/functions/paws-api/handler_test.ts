@@ -53,6 +53,12 @@ function fixture(
               publicWallet: true,
               liveTracking: true,
               leaderboard: true,
+              autoLiveStart: true,
+              crossingRoutes: true,
+              purchases: true,
+              territoryLeaderboard: true,
+              maxAccuracy: 20,
+              closureMeters: 20,
               photoLimit: 1000000,
             }
             : { pet: null, area: 0 },
@@ -205,7 +211,7 @@ Deno.test("маршрут: плохая точность отклоняется 
     (await handler(
       await request("/api/capture", "POST", {
         walk_id: walk,
-        points: [...points.slice(0, 3), { ...points[3], accuracy: 16 }],
+        points: [...points.slice(0, 3), { ...points[3], accuracy: 20.001 }],
       }),
     )).status === 422,
   );
@@ -409,7 +415,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.5.0" && config.features.chat === false &&
+    config.version === "0.6.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -466,11 +472,12 @@ Deno.test("live: только подписанный Telegram update с влад
     }),
   );
   assert(r.status === 200);
-  const c = f.calls.find((c) => c.url.endsWith("/paws_live_point"))!;
+  const c = f.calls.find((c) => c.url.endsWith("/paws_live_receive"))!;
   const payload = JSON.parse(String(c.options.body));
   assert(
     payload.p_user === 42 && payload.p_timestamp === NOW &&
-      payload.p_accuracy === 12,
+      payload.p_accuracy === 12 && payload.p_initial === false &&
+      payload.p_sent_at === NOW - 20,
   );
   const before = f.calls.length;
   await f.handler(
@@ -510,7 +517,7 @@ Deno.test("live: ошибки открытого контура отвечают
       ? Response.json({ ok: true, result: {} })
       : Response.json({
         code: "P0001",
-        message: "Контур открыт. Вернитесь в пределах 15 м.",
+        message: "Контур открыт. Вернитесь в пределах 20 м.",
       }, { status: 400 })
   );
   const r = await f.handler(
@@ -525,7 +532,7 @@ Deno.test("live: ошибки открытого контура отвечают
   assert(r.status === 200);
   assert(f.calls.some((c) => c.url.includes("/sendMessage")));
 });
-Deno.test("live: старт при погрешности 15 м, запрет более 15", async () => {
+Deno.test("live: старт при погрешности 20 м, запрет более 20", async () => {
   const f = fixture((url) =>
     Response.json(
       url.includes("api.telegram.org")
@@ -535,13 +542,13 @@ Deno.test("live: старт при погрешности 15 м, запрет б
   );
   assert(
     (await f.handler(
-      await request("/api/live/start", "POST", { accuracy: 15 }),
+      await request("/api/live/start", "POST", { accuracy: 20 }),
     )).status === 200,
   );
   const before = f.calls.length;
   assert(
     (await f.handler(
-      await request("/api/live/start", "POST", { accuracy: 15.01 }),
+      await request("/api/live/start", "POST", { accuracy: 20.01 }),
     )).status === 422,
   );
   assert(f.calls.length === before);
@@ -558,4 +565,177 @@ Deno.test("TOP: проверенный пользователь, порядок 
     data.agents[0].pet.id === "99" && data.agents[0].wallet.balance === 100,
   );
   assert(JSON.parse(String(f.calls[0].options.body)).p_user === 42);
+});
+
+Deno.test("v06: кнопки прогулки проверяют отправителя и вызывают только его RPC", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.includes("api.telegram.org")
+        ? { ok: true, result: {} }
+        : { id: "capture", area: 123 },
+    )
+  );
+  const query = {
+    id: "callback-1",
+    data: "walk_capture",
+    from: { id: 42 },
+    message: { chat: { id: 42, type: "private" } },
+  };
+  const headers = { "X-Telegram-Bot-Api-Secret-Token": SECRET };
+  assert(
+    (await f.handler(
+      await request("/webhook", "POST", { callback_query: query }, headers),
+    )).status === 200,
+  );
+  const capture = f.calls.find((c) => c.url.endsWith("/paws_live_capture"))!;
+  assert(JSON.parse(String(capture.options.body)).p_user === 42);
+  assert(f.calls.some((c) => c.url.endsWith("/answerCallbackQuery")));
+  const count = f.calls.length;
+  for (
+    const invalid of [{ ...query, from: { id: 43 } }, {
+      ...query,
+      message: { chat: { id: 42, type: "group" } },
+    }, { ...query, data: "unknown" }]
+  ) {
+    await f.handler(
+      await request("/webhook", "POST", { callback_query: invalid }, headers),
+    );
+    assert(f.calls.length === count);
+  }
+});
+
+Deno.test("v06: переход в чат отправляет инструкцию без запуска прогулки и GPS", async () => {
+  const f = fixture(() => Response.json({ ok: true, result: {} }));
+  assert(
+    (await f.handler(await request("/api/live/instructions", "POST")))
+      .status === 200,
+  );
+  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/sendMessage"));
+  const payload = JSON.parse(String(f.calls[0].options.body));
+  assert(
+    payload.chat_id === 42 &&
+      payload.reply_markup.inline_keyboard[1][0].callback_data ===
+        "walk_capture",
+  );
+  assert(
+    (await f.handler(
+      new Request(`${BASE}/paws-api/api/live/instructions`, { method: "POST" }),
+    )).status === 401,
+  );
+});
+
+Deno.test("v06: новый сервер сообщает порог БД и требует миграцию для health", async () => {
+  const f = fixture();
+  const config = await (await f.handler(await request("/api/config"))).json();
+  assert(
+    config.maxAccuracy === 20 && config.closureMeters === 20 &&
+      config.features.crossingRoutes,
+  );
+  assert((await f.handler(await request("/health"))).status === 200);
+  const old = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_capabilities")
+        ? { liveTracking: true, leaderboard: true }
+        : {},
+    )
+  );
+  assert((await old.handler(await request("/health"))).status === 503);
+  const legacy = await (await old.handler(await request("/api/config"))).json();
+  assert(legacy.maxAccuracy === 15 && legacy.closureMeters === 15);
+});
+
+Deno.test("v06: новая трансляция передаёт в БД признак автоматического запуска", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.includes("api.telegram.org")
+        ? { ok: true, result: {} }
+        : { accepted: true, first: true, prepared: true },
+    )
+  );
+  await f.handler(
+    await request("/webhook", "POST", {
+      update_id: 7,
+      message: {
+        message_id: 9,
+        date: NOW,
+        from: { id: 42 },
+        chat: { id: 42, type: "private" },
+        location: {
+          latitude: 54,
+          longitude: 20,
+          horizontal_accuracy: 20,
+          live_period: 3600,
+        },
+      },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  const args = JSON.parse(String(f.calls[0].options.body));
+  assert(
+    f.calls[0].url.endsWith("/paws_live_receive") && args.p_initial === true &&
+      args.p_sent_at === NOW && args.p_accuracy === 20,
+  );
+});
+
+Deno.test("v06: покупка использует владельца подписи и проверяет цену/контур до RPC", async () => {
+  const f = fixture(() => Response.json({ area: 100, cost: 1000 }));
+  const vertices = [{ longitude: 20, latitude: 54 }, {
+    longitude: 20.001,
+    latitude: 54,
+  }, { longitude: 20, latitude: 54.001 }];
+  assert(
+    (await f.handler(
+      await request("/api/purchases/quote", "POST", { vertices, user_id: 999 }),
+    )).status === 200,
+  );
+  assert(JSON.parse(String(f.calls[0].options.body)).p_user === 42);
+  const body = {
+    vertices,
+    requestId: "00000000-0000-0000-0000-000000000001",
+    maxCost: 1000,
+    user_id: 999,
+  };
+  assert(
+    (await f.handler(await request("/api/purchases", "POST", body))).status ===
+      200,
+  );
+  assert(f.calls.at(-1)!.url.endsWith("/paws_purchase"));
+  const count = f.calls.length;
+  for (
+    const invalid of [{ ...body, maxCost: -1 }, { ...body, vertices: [] }, {
+      ...body,
+      requestId: "broken",
+    }]
+  ) {
+    assert(
+      (await f.handler(await request("/api/purchases", "POST", invalid)))
+        .status === 422,
+    );
+  }
+  assert(f.calls.length === count);
+});
+
+Deno.test("v06: рейтинг площади выбирает отдельный RPC и сохраняет фото", async () => {
+  const f = fixture(() =>
+    Response.json({
+      agents: [{
+        pet: {
+          id: "42",
+          photo_key: "42/00000000-0000-0000-0000-000000000001.jpg",
+        },
+        area: 200,
+        wallet: { balance: 10 },
+      }],
+    })
+  );
+  const response = await f.handler(await request("/api/top?sort=area"));
+  const data = await response.json();
+  assert(
+    f.calls[0].url.endsWith("/paws_top_area") && data.agents[0].area === 200 &&
+      data.agents[0].pet.photo.endsWith(".jpg"),
+  );
+  const count = f.calls.length;
+  assert(
+    (await f.handler(await request("/api/top?sort=invalid"))).status === 422 &&
+      f.calls.length === count,
+  );
 });

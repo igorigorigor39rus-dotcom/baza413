@@ -9,13 +9,13 @@ export function meters(a, b) {
       Math.sin(dLon / 2) ** 2;
   return 6371008.8 * 2 * Math.asin(Math.sqrt(Math.min(1, h)));
 }
-export function goodFix(p) {
+export function goodFix(p, maxAccuracy = 20) {
   return (
     [p.latitude, p.longitude, p.accuracy, p.timestamp].every(Number.isFinite) &&
     Math.abs(p.latitude) <= 85 &&
     Math.abs(p.longitude) <= 180 &&
     p.accuracy >= 0 &&
-    p.accuracy <= 15
+    p.accuracy <= maxAccuracy
   );
 }
 export function shouldAppend(previous, p) {

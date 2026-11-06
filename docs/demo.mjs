@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs?v=0.5.0";
+import { meters } from "./tracking.mjs?v=0.6.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -124,8 +124,14 @@ export function createDemoApi(storage, clipping) {
         demoMode: true,
         localDemo: true,
         demoRoute: DEMO_ROUTE,
-        closureMeters: 15,
-        maxAccuracy: 15,
+        closureMeters: 20,
+        maxAccuracy: 20,
+        features: {
+          crossingRoutes: true,
+          purchases: true,
+          purchasePrice: 10,
+          territoryLeaderboard: true,
+        },
       };
     }
     const data = load(), method = options.method ?? "GET";
@@ -166,15 +172,87 @@ export function createDemoApi(storage, clipping) {
       save(data);
       return { ...pet, wallet };
     }
-    if (path === "/api/top") {
+    if (path === "/api/top" || path === "/api/top?sort=area") {
       const pets = [neighbor, ...(data.pet ? [data.pet] : [])];
-      const agents = pets.map((pet) => ({ pet, wallet: settleFor(pet.id) }))
+      const agents = pets.map((pet) => ({
+        pet,
+        wallet: settleFor(pet.id),
+        area: data.territories.filter((t) => t.ownerId === pet.id).reduce(
+          (sum, t) => sum + area(t.geometry),
+          0,
+        ),
+      }))
         .sort((a, b) =>
-          b.wallet.balance - a.wallet.balance ||
+          (path.includes("sort=area")
+            ? b.area - a.area
+            : b.wallet.balance - a.wallet.balance) ||
           a.pet.id.localeCompare(b.pet.id)
         ).slice(0, 10);
       save(data);
       return { agents };
+    }
+    if (path === "/api/purchases/quote" || path === "/api/purchases") {
+      if (!data.pet) throw new Error("Сначала создайте досье.");
+      const b = JSON.parse(options.body);
+      if (path === "/api/purchases" && data.purchases?.[b.requestId]) {
+        return data.purchases[b.requestId];
+      }
+      if (
+        !Array.isArray(b.vertices) || b.vertices.length < 3 ||
+        b.vertices.length > 100 ||
+        b.vertices.some((p) =>
+          !Number.isFinite(p.latitude) || !Number.isFinite(p.longitude) ||
+          Math.abs(p.latitude) > 85 || Math.abs(p.longitude) > 180
+        )
+      ) throw new Error("Отметьте от 3 до 100 точек участка.");
+      const ring = b.vertices.map((p) => [p.longitude, p.latitude]);
+      ring.push(ring[0]);
+      const polygon = { type: "MultiPolygon", coordinates: [[ring]] },
+        sqm = area(polygon),
+        cost = Math.ceil(sqm * 10);
+      if (sqm < 25 || sqm > 10000000) {
+        throw new Error("Площадь покупки должна быть от 25 м² до 10 км².");
+      }
+      if (
+        data.territories.some((t) =>
+          area({
+            type: "MultiPolygon",
+            coordinates: clipping.intersection(t.geometry.coordinates, [ring]),
+          }) > .000001
+        )
+      ) throw new Error("Покупать можно только свободную территорию.");
+      const wallet = settleFor(data.pet.id);
+      if (path === "/api/purchases/quote") {
+        return {
+          area: sqm,
+          cost,
+          price: 10,
+          balance: wallet.balance,
+          affordable: wallet.balance >= cost,
+        };
+      }
+      if (
+        typeof b.requestId !== "string" ||
+        !/^[a-f0-9-]{36}$/i.test(b.requestId) || b.maxCost < cost
+      ) throw new Error("Повторите расчёт покупки.");
+      if (wallet.balance < cost) throw new Error("Недостаточно косточек.");
+      wallet.balance -= cost;
+      const receipt = {
+        id: crypto.randomUUID(),
+        area: sqm,
+        cost,
+        requestId: b.requestId,
+      };
+      data.territories.push({
+        id: receipt.id,
+        ownerId: data.pet.id,
+        geometry: polygon,
+      });
+      wallet.rate += sqm;
+      data.purchases ??= {};
+      data.purchases[b.requestId] = receipt;
+      save(data);
+      return receipt;
     }
     if (path === "/api/chat" && method === "GET") {
       return { messages: data.messages ?? [] };

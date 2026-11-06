@@ -22,6 +22,18 @@ function number(value: unknown, min: number, max: number) {
   ) throw new ApiError(422, "Некорректное число в запросе.");
   return value;
 }
+function purchaseVertices(value: unknown) {
+  if (!Array.isArray(value) || value.length < 3 || value.length > 100) {
+    throw new ApiError(422, "Отметьте от 3 до 100 точек участка.");
+  }
+  return value.map((v) => {
+    const p = object(v);
+    return {
+      longitude: number(p.longitude, -180, 180),
+      latitude: number(p.latitude, -85, 85),
+    };
+  });
+}
 async function readBody(req: Request, limit = 3 * 1024 * 1024) {
   const reader = req.body?.getReader();
   const chunks: Uint8Array[] = [];
@@ -136,6 +148,18 @@ export function createHandler(deps: Dependencies) {
     const data = await response.json();
     if (!data.ok) throw new ApiError(503, "Telegram отклонил запрос бота.");
   }
+  const walkButtons = {
+    inline_keyboard: [
+      [{ text: "🐾 Карта и досье", web_app: { url: appUrl } }],
+      [
+        { text: "✓ Захватить", callback_data: "walk_capture" },
+        { text: "⌖ Статус", callback_data: "walk_status" },
+        { text: "Отмена", callback_data: "walk_cancel" },
+      ],
+    ],
+  };
+  const liveInstructions =
+    "Чтобы гулять с выключенным экраном: скрепка → Геопозиция → Транслировать геопозицию. Запись начнётся сама, когда погрешность GPS будет не больше 20 м. Разрешите Telegram точную геопозицию в фоне. После возвращения к старту в пределах 20 м нажмите «Захватить» ниже.\n\nTelegram требует включить трансляцию вручную; обычная отправка одной точки не записывает маршрут. Точки временно хранятся на сервере. Работа в фоне зависит от телефона и частоты обновлений Telegram.";
   async function removePhoto(path: string | null | undefined) {
     if (!path || !PHOTO.test(path)) return;
     try {
@@ -162,9 +186,35 @@ export function createHandler(deps: Dependencies) {
         )
       ) throw new ApiError(401, "Недействительный webhook.");
       const update = await jsonBody(req);
-      const m = (update.message ?? update.edited_message) as
+      let m = (update.message ?? update.edited_message) as
         | Record<string, unknown>
         | undefined;
+      const callback = update.callback_query as
+        | Record<string, unknown>
+        | undefined;
+      if (callback) {
+        const source = callback.message as Record<string, unknown> | undefined,
+          chat = source?.chat as Record<string, unknown> | undefined,
+          from = callback.from as Record<string, unknown> | undefined;
+        const commands: Record<string, string> = {
+          walk_capture: "/capture",
+          walk_status: "/status",
+          walk_cancel: "/cancel",
+        };
+        const command = typeof callback.data === "string"
+          ? commands[callback.data]
+          : undefined;
+        if (
+          !command || chat?.type !== "private" || from?.id !== chat.id ||
+          from?.is_bot ||
+          typeof callback.id !== "string" || callback.id.length > 256
+        ) return { ok: true };
+        // Устаревшая кнопка не должна мешать идемпотентной серверной операции.
+        try {
+          await bot("answerCallbackQuery", { callback_query_id: callback.id });
+        } catch { /* кнопка могла истечь */ }
+        m = { chat, from, text: command };
+      }
       const location = m?.location as Record<string, unknown> | undefined;
       const sender = m?.from as Record<string, unknown> | undefined;
       const locationChat = m?.chat as Record<string, unknown> | undefined;
@@ -185,11 +235,13 @@ export function createHandler(deps: Dependencies) {
           ) {
             throw new ApiError(422, "Некорректное обновление.");
           }
-          const result = await rpc("paws_live_point", {
+          const result = await rpc("paws_live_receive", {
             p_user: id,
             p_message: message,
             p_update: updateId,
             p_timestamp: number(m?.edit_date ?? m?.date, 0, 1e12),
+            p_sent_at: number(m?.date, 0, 1e12),
+            p_initial: !update.edited_message,
             p_longitude: number(location.longitude, -180, 180),
             p_latitude: number(location.latitude, -85, 85),
             p_accuracy: typeof location.horizontal_accuracy === "number"
@@ -203,7 +255,8 @@ export function createHandler(deps: Dependencies) {
             await bot("sendMessage", {
               chat_id: id,
               text:
-                "Фоновая запись началась. Telegram может передавать координаты при выключенном дисплее, если разрешён фоновый доступ к геопозиции. Вернитесь к старту в пределах 15 м, затем /capture. /status — состояние, /cancel — отмена. При пропусках GPS захват отклоняется.",
+                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м, дождитесь свежей точки GPS и нажмите «Захватить». Пересечения трека разрешены. При пропусках координат захват отклоняется.",
+              reply_markup: walkButtons,
             });
           } else if (result.reason === "gap") {
             await bot("sendMessage", { chat_id: id, text: result.message });
@@ -211,13 +264,35 @@ export function createHandler(deps: Dependencies) {
             await bot("sendMessage", {
               chat_id: id,
               text:
-                "Трансляция получена, но точность GPS неизвестна или хуже 15 м. Выйдите на открытое место; неточные точки не записываются.",
+                "Трансляция включена. Ждём GPS с погрешностью не больше 20 м — запись начнётся сама. Выйдите на открытое место; неточные точки не записываются.",
+              reply_markup: walkButtons,
             });
           } else if (!update.edited_message && result.reason === "not_live") {
             await bot("sendMessage", {
               chat_id: id,
-              text:
-                "Нужна трансляция геопозиции через скрепку → Геопозиция → Транслировать, а не разовая точка.",
+              text: liveInstructions,
+              reply_markup: walkButtons,
+            });
+          } else if (
+            !update.edited_message &&
+            ["profile", "foreground_active", "other_message", "old"].includes(
+              result.reason,
+            )
+          ) {
+            const texts: Record<string, string> = {
+              profile:
+                "Сначала создайте досье питомца через кнопку «Карта и досье», затем включите новую трансляцию геопозиции.",
+              foreground_active:
+                "На карте уже идёт обычная GPS-запись. Завершите или отмените её, затем включите новую трансляцию.",
+              other_message:
+                "Прогулка уже связана с другой трансляцией. Продолжите её или нажмите «Отмена», затем включите новую трансляцию.",
+              old:
+                "Эта трансляция пришла слишком поздно. Остановите её и включите новую, чтобы начать прогулку.",
+            };
+            await bot("sendMessage", {
+              chat_id: id,
+              text: texts[result.reason],
+              reply_markup: walkButtons,
             });
           }
         } catch (error) {
@@ -249,6 +324,7 @@ export function createHandler(deps: Dependencies) {
               text: `Территория захвачена: ${
                 Math.round(Number(result.area))
               } м². Остановите трансляцию геопозиции в Telegram.`,
+              reply_markup: walkButtons,
             });
           } else if (command === "/cancel") {
             await rpc("paws_live_cancel", { p_user: id });
@@ -256,6 +332,7 @@ export function createHandler(deps: Dependencies) {
               chat_id: id,
               text:
                 "Фоновая прогулка отменена, временные точки удалены. Остановите трансляцию геопозиции Telegram.",
+              reply_markup: walkButtons,
             });
           } else {
             const result = await rpc("paws_live_status", { p_user: id });
@@ -263,14 +340,17 @@ export function createHandler(deps: Dependencies) {
             await bot("sendMessage", {
               chat_id: id,
               text: !walk
-                ? "Активной фоновой прогулки нет."
+                ? "Активной прогулки нет. Чтобы начать, включите трансляцию: скрепка → Геопозиция → Транслировать геопозицию."
                 : walk.error
                 ? walk.error
                 : walk.points.length
                 ? `Принято точек: ${walk.points.length}. Последняя точность ±${
                   walk.points.at(-1).accuracy
-                } м, ${Math.max(0, Math.round(now() - walk.points.at(-1).timestamp))} сек. назад. Точка не старше 15 секунд нужна для захвата. /capture — захват, /cancel — отмена.`
-                : "Ждём трансляцию с точностью ≤15 м. Начните её через скрепку в этом чате.",
+                } м, ${
+                  Math.max(0, Math.round(now() - walk.points.at(-1).timestamp))
+                } сек. назад. Точка не старше 15 секунд нужна для захвата. /capture — захват, /cancel — отмена.`
+                : "Ждём GPS с погрешностью ≤20 м. Запись начнётся автоматически.",
+              reply_markup: walkButtons,
             });
           }
         } catch (e) {
@@ -289,13 +369,8 @@ export function createHandler(deps: Dependencies) {
       } else {await bot("sendMessage", {
           chat_id: id,
           text:
-            "🐾 Бюро собачьих дел\n\nСоздайте досье питомца, обойдите участок и вернитесь в пределах 15 м от старта. Для старта и финиша нужна точность GPS ≤15 м.\n\nОбычная запись требует открытой карты. Для выключенного экрана выберите в приложении отдельный режим Telegram, затем отправьте этому боту трансляцию геопозиции. Фоновая работа зависит от телефона и разрешений. /status — состояние, /capture — захват, /cancel — отмена.\n\n/privacy — о данных.",
-          reply_markup: {
-            inline_keyboard: [[{
-              text: "🐾 Открыть карту",
-              web_app: { url: appUrl },
-            }]],
-          },
+            `🐾 DogWars. Захвати мир!\n\nСоздайте досье питомца по кнопке «Карта и досье».\n\n${liveInstructions}\n\nОбычная запись с открытой картой тоже доступна. /privacy — о данных.`,
+          reply_markup: walkButtons,
         });}
       return { ok: true };
     }
@@ -320,11 +395,11 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.5.0",
+        version: "0.6.0",
         features,
         demoMode: false,
-        closureMeters: 15,
-        maxAccuracy: 15,
+        closureMeters: features.closureMeters ?? 15,
+        maxAccuracy: features.maxAccuracy ?? 15,
         demoRoute: null,
         appUrl,
       };
@@ -333,10 +408,13 @@ export function createHandler(deps: Dependencies) {
       await rpc("paws_me", { p_user: 0 });
       await rpc("paws_wallet", { p_user: 0 });
       const capabilities = await rpc("paws_capabilities", {});
-      if (!capabilities.liveTracking || !capabilities.leaderboard) {
-        throw new ApiError(503, "Установите полную миграцию v.0.5.");
+      if (
+        !capabilities.autoLiveStart || !capabilities.crossingRoutes ||
+        !capabilities.purchases || !capabilities.territoryLeaderboard
+      ) {
+        throw new ApiError(503, "Установите полную миграцию v.0.6.");
       }
-      return { ok: true, version: "0.5.0" };
+      return { ok: true, version: "0.6.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -346,13 +424,46 @@ export function createHandler(deps: Dependencies) {
       );
     }
     const user = await verifyInitData(authorization.slice(4), token, now());
+    if (path === "/api/live/instructions" && req.method === "POST") {
+      await bot("sendMessage", {
+        chat_id: user,
+        text: liveInstructions,
+        reply_markup: walkButtons,
+      });
+      return { ok: true };
+    }
     if (path === "/api/top" && req.method === "GET") {
-      const result = await rpc("paws_top", { p_user: user });
+      const sort = url.searchParams.get("sort") ?? "bones";
+      if (!["bones", "area"].includes(sort)) {
+        throw new ApiError(422, "Неизвестный рейтинг.");
+      }
+      const result = await rpc(sort === "area" ? "paws_top_area" : "paws_top", {
+        p_user: user,
+      });
       result.agents = result.agents.map((a: Record<string, unknown>) => ({
         ...a,
         pet: pet(a.pet as Pet),
       }));
       return result;
+    }
+    if (path === "/api/purchases/quote" && req.method === "POST") {
+      const b = await jsonBody(req);
+      return await rpc("paws_purchase_quote", {
+        p_user: user,
+        p_vertices: purchaseVertices(b.vertices),
+      });
+    }
+    if (path === "/api/purchases" && req.method === "POST") {
+      const b = await jsonBody(req);
+      if (typeof b.requestId !== "string" || !UUID.test(b.requestId)) {
+        throw new ApiError(422, "Некорректный номер покупки.");
+      }
+      return await rpc("paws_purchase", {
+        p_user: user,
+        p_request: b.requestId,
+        p_vertices: purchaseVertices(b.vertices),
+        p_max_cost: number(b.maxCost, 0, 100000000),
+      });
     }
     if (path === "/api/live/status" && req.method === "GET") {
       return await rpc("paws_live_status", { p_user: user });
@@ -361,13 +472,13 @@ export function createHandler(deps: Dependencies) {
       const b = await jsonBody(req);
       const result = await rpc("paws_live_start", {
         p_user: user,
-        p_accuracy: number(b.accuracy, 0, 15),
+        p_accuracy: number(b.accuracy, 0, 20),
       });
       try {
         await bot("sendMessage", {
           chat_id: user,
-          text:
-            "Фоновая прогулка подготовлена. В этом чате: скрепка → Геопозиция → Транслировать геопозицию. Нужна точность ≤15 м. /status — состояние; /capture — захват после возврата к старту в пределах 15 м; /cancel — отмена. Разрешите Telegram доступ к геопозиции в фоне. Точки временно сохраняются на сервере.",
+          text: liveInstructions,
+          reply_markup: walkButtons,
         });
       } catch {
         /* интерфейс тоже показывает инструкцию, созданную прогулку не теряем */
@@ -608,7 +719,7 @@ export function createHandler(deps: Dependencies) {
         return {
           latitude: number(p.latitude, -85, 85),
           longitude: number(p.longitude, -180, 180),
-          accuracy: number(p.accuracy, 0, 15),
+          accuracy: number(p.accuracy, 0, 20),
           timestamp: number(p.timestamp, 0, 1e12),
         };
       });

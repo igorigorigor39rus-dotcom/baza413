@@ -6,28 +6,28 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#f6f7f0" />
-    <title>Лапы на карте</title>
+    <meta name="theme-color" content="#20242b" />
+    <title>DogWars. Захвати мир!</title>
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.tile.opentopomap.org data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://fywsqxijebneqkxusgro.supabase.co; font-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; object-src 'none'"
     />
-    <link rel="icon" href="./assets/paw.svg?v=0.5.0" type="image/svg+xml" />
-    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.5.0" />
-    <link rel="stylesheet" href="./style.css?v=0.5.0" />
+    <link rel="icon" href="./assets/paw.svg?v=0.6.0" type="image/svg+xml" />
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.6.0" />
+    <link rel="stylesheet" href="./style.css?v=0.6.0" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-    <script src="./vendor/leaflet/leaflet.js?v=0.5.0" defer></script>
-    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.5.0" defer></script>
+    <script src="./vendor/leaflet/leaflet.js?v=0.6.0" defer></script>
+    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.6.0" defer></script>
 
-    <script src="./app.js?v=0.5.0" type="module"></script>
+    <script src="./app.js?v=0.6.0" type="module"></script>
   </head>
   <body>
     <main class="app">
       <header class="header">
         <div>
-          <p class="eyebrow">ДЕЛО № 413 · СЕКРЕТНО</p>
-          <h1>Бюро<br />собачьих дел.</h1>
+          <p class="eyebrow">Добро пожаловать мой генерал</p>
+          <h1>DogWars.<br /><span>Захвати мир!</span></h1>
         </div>
         <button
           id="profile-button"
@@ -35,7 +35,7 @@
           aria-label="Мой питомец"
           disabled
         >
-          <img src="./assets/paw.svg?v=0.5.0" alt="Досье питомца">
+          <img src="./assets/paw.svg?v=0.6.0" alt="Досье питомца">
         </button>
       </header>
       <div id="mode-banner" class="mode-banner" hidden>
@@ -56,17 +56,17 @@
         <button id="open-chat" class="secondary">Оперативная связь</button>
       </div>
       <button id="open-top" class="text-button">
-        ТОП-10 Агентов · 🦴
+        ТОП-10 Генералов · 🦴
       </button><label class="map-choice">Карта <select id="map-provider">
           <option value="osm">OpenStreetMap</option>
           <option value="relief">OpenTopoMap · рельеф</option>
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_5.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_6.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.5</a>
+        >Инструкция v.0.6</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -84,6 +84,26 @@
         <div id="map-warning" class="map-warning" hidden>
           Карта не загрузилась. Проверьте интернет: маршруты и кнопки работают
           отдельно от подложки.
+        </div>
+      </section>
+      <section class="purchase-section" aria-label="Покупка территории">
+        <button id="purchase-start" class="secondary" disabled>
+          Купить свободную территорию · 🦴
+        </button>
+        <p id="purchase-note" class="hint">1 м² = 10 🦴.</p>
+        <div id="purchase-panel" hidden>
+          <h3>Отметьте участок на карте</h3>
+          <p id="purchase-status" role="status"></p>
+          <div class="purchase-tools">
+            <button id="purchase-undo" class="secondary">Убрать точку</button>
+            <button id="purchase-clear" class="secondary">Очистить</button>
+          </div>
+          <button id="purchase-confirm" class="primary" disabled>
+            Купить участок
+          </button>
+          <button id="purchase-cancel" class="text-button">
+            Отмена покупки
+          </button>
         </div>
       </section>
       <section class="walk-panel">
@@ -106,7 +126,7 @@
           Начать захват <span>↗</span>
         </button>
         <button id="live-start" class="secondary">
-          С выключенным экраном · Telegram
+          Гулять с выключенным экраном
         </button>
         <p id="live-note" class="hint"></p>
         <section id="live-panel" hidden>
@@ -141,7 +161,7 @@
         </button>
         <a class="demo-link" href="?demo=1">Посмотреть демо без Telegram</a>
         <p class="hint" id="closure-hint">
-          Замкните маршрут в пределах 15 м от старта. Гуляйте только там, где
+          Замкните маршрут в пределах 20 м от старта. Гуляйте только там, где
           это разрешено.
         </p>
       </section>
@@ -154,7 +174,9 @@
           ×
         </button>
       </div>
-      <p class="muted">Общий канал агентов. Сообщения видны всем участникам.</p>
+      <p class="muted">
+        Общий канал Генералов. Сообщения видны всем участникам.
+      </p>
       <div id="chat-messages" role="log" aria-live="polite"></div>
       <p id="chat-error" class="error" role="status"></p>
       <form id="chat-form">
@@ -174,7 +196,7 @@
         <div class="dialog-heading">
           <div>
             <p class="eyebrow">ЛИЧНОЕ ДЕЛО</p>
-            <h2>Досье агента</h2>
+            <h2>Досье Генерала</h2>
           </div>
           <button
             type="button"
@@ -190,7 +212,7 @@
         </p>
         <label class="photo-picker"><img
             id="photo-preview"
-            src="./assets/paw.svg?v=0.5.0"
+            src="./assets/paw.svg?v=0.6.0"
             alt="Фото питомца"
           /><span>Добавить или заменить фото<input
               id="photo-input"
@@ -275,14 +297,30 @@
       <div class="owner-card">
         <button class="close-button" id="close-owner" aria-label="Закрыть">
           ×
-        </button><img id="owner-photo" alt="Фото владельца территории" />
-        <p class="eyebrow">АГЕНТ ПОД НАБЛЮДЕНИЕМ</p>
+        </button>
+        <button
+          id="enlarge-owner-photo"
+          class="photo-button"
+          aria-label="Увеличить фото питомца"
+        >
+          <img id="owner-photo" alt="Фото питомца" />
+        </button>
+        <p class="eyebrow">ГЕНЕРАЛ ПОД НАБЛЮДЕНИЕМ</p>
         <h2 id="owner-name"></h2>
         <p id="owner-description"></p>
         <p id="owner-bones" class="owner-bones" aria-label="Баланс косточек">
         </p>
         <button id="owner-done" class="secondary">Вернуться на карту</button>
       </div>
+    </dialog>
+    <dialog id="photo-dialog" aria-labelledby="photo-title">
+      <div class="dialog-heading">
+        <h2 id="photo-title"></h2>
+        <button id="close-photo" class="close-button" aria-label="Закрыть фото">
+          ×
+        </button>
+      </div>
+      <img id="large-photo" alt="" />
     </dialog>
     <dialog id="rules-dialog">
       <div class="dialog-heading">
@@ -307,10 +345,15 @@
       <p>
         100 м² дают 100 🦴 в час; 50 м² — 50 🦴 в час.
       </p>
+      <p>
+        Свободную землю можно купить: 1 м² = 10 🦴. Итоговая стоимость
+        округляется вверх до целой 🦴. Купленная территория приносит доход
+        и может быть перезахвачена прогулкой по общим правилам.
+      </p>
     </dialog>
     <dialog id="top-dialog">
       <div class="dialog-heading">
-        <h2>ТОП-10 Агентов</h2>
+        <h2>ТОП-10 Генералов</h2>
         <button
           id="close-top"
           class="close-button"
@@ -319,16 +362,20 @@
           ×
         </button>
       </div>
-      <p class="muted">
-        По текущему серверному балансу 🦴, включая начисления вне приложения.
-      </p>
+      <div class="ranking-tabs" role="tablist" aria-label="Рейтинг Генералов">
+        <button id="top-bones" role="tab" aria-selected="true">По 🦴</button>
+        <button id="top-area" role="tab" aria-selected="false">
+          По территории
+        </button>
+      </div>
+      <p class="muted" id="top-description">По текущему балансу 🦴.</p>
       <p id="top-error" class="error" role="status"></p>
       <table class="ranking">
         <thead>
           <tr>
             <th>№</th>
-            <th>Агент</th>
-            <th>🦴</th>
+            <th>Генерал</th>
+            <th id="top-score">🦴</th>
           </tr>
         </thead>
         <tbody id="top-body"></tbody>

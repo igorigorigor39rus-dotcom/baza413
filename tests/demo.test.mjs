@@ -63,3 +63,21 @@ test("ошибка локального хранилища не выглядит
     /сохранить демо/,
   );
 });
+
+test("демо: покупка свободного участка, цена 10, повтор без списания и рейтинг площади",async()=>{
+  const s=storage(),api=createDemoApi(s,clipping);
+  await api('/api/me',{method:'PUT',body:JSON.stringify({name:'Генерал',age:2,color:'#397C63'})});
+  await api('/api/demo/capture',{method:'POST'});
+  const key='paws:browser-demo:v1',data=JSON.parse(s.getItem(key));
+  data.wallets['demo-me'].balance=100000;s.setItem(key,JSON.stringify(data));
+  const vertices=[{longitude:20.46,latitude:54.71},{longitude:20.4602,latitude:54.71},{longitude:20.4602,latitude:54.7102},{longitude:20.46,latitude:54.7102}];
+  const quote=await api('/api/purchases/quote',{method:'POST',body:JSON.stringify({vertices})});
+  assert.equal(quote.cost,Math.ceil(quote.area*10));assert.equal(quote.affordable,true);
+  const body=JSON.stringify({vertices,maxCost:quote.cost,requestId:crypto.randomUUID()});
+  const receipt=await api('/api/purchases',{method:'POST',body});
+  const before=JSON.parse(s.getItem(key)).wallets['demo-me'].balance;
+  assert.deepEqual(await api('/api/purchases',{method:'POST',body}),receipt);
+  assert.equal(JSON.parse(s.getItem(key)).wallets['demo-me'].balance,before);
+  await assert.rejects(api('/api/purchases/quote',{method:'POST',body:JSON.stringify({vertices})}),/свободную/);
+  const top=await api('/api/top?sort=area');assert.equal(top.agents[0].pet.id,'demo-me');assert.ok(top.agents[0].area>receipt.area);
+});
