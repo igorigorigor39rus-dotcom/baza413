@@ -13,14 +13,14 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.tile.opentopomap.org data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://fywsqxijebneqkxusgro.supabase.co; font-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; object-src 'none'"
     />
-    <link rel="icon" href="./assets/paw.svg?v=0.7.1" type="image/svg+xml" />
-    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.7.1" />
-    <link rel="stylesheet" href="./style.css?v=0.7.1" />
+    <link rel="icon" href="./assets/paw.svg?v=0.8.0" type="image/svg+xml" />
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.8.0" />
+    <link rel="stylesheet" href="./style.css?v=0.8.0" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-    <script src="./vendor/leaflet/leaflet.js?v=0.7.1" defer></script>
-    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.7.1" defer></script>
+    <script src="./vendor/leaflet/leaflet.js?v=0.8.0" defer></script>
+    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.8.0" defer></script>
 
-    <script src="./app.js?v=0.7.1" type="module"></script>
+    <script src="./app.js?v=0.8.0" type="module"></script>
   </head>
   <body>
     <main class="app">
@@ -35,7 +35,7 @@
           aria-label="Мой питомец"
           disabled
         >
-          <img src="./assets/paw.svg?v=0.7.1" alt="Досье питомца">
+          <img src="./assets/paw.svg?v=0.8.0" alt="Досье питомца">
         </button>
       </header>
       <div id="mode-banner" class="mode-banner" hidden>
@@ -60,16 +60,19 @@
       </button>
       <button id="open-notifications" class="text-button" hidden>
         Уведомления
-      </button><label class="map-choice">Карта <select id="map-provider">
+      </button>
+      <button id="open-shop" class="text-button" hidden>Купить 🦴</button><label
+        class="map-choice"
+      >Карта <select id="map-provider">
           <option value="osm">OpenStreetMap</option>
           <option value="relief">OpenTopoMap · рельеф</option>
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7_1.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_8.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.7.1</a>
+        >Инструкция v.0.8</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -232,7 +235,7 @@
         </p>
         <label class="photo-picker"><img
             id="photo-preview"
-            src="./assets/paw.svg?v=0.7.1"
+            src="./assets/paw.svg?v=0.8.0"
             alt="Фото питомца"
           /><span>Добавить или заменить фото<input
               id="photo-input"
@@ -311,6 +314,19 @@
         <button type="submit" id="save-profile" class="primary">
           Сохранить досье <span>✓</span>
         </button>
+        <button type="button" id="show-my-territory" class="secondary">
+          Показать территорию
+        </button>
+        <p id="profile-territory-status" role="status"></p>
+        <fieldset id="reminders-settings" hidden>
+          <legend>Напоминания о прогулках</legend>
+          <label><input id="reminders-enabled" type="checkbox" checked />
+            Напоминать, если меня нет больше двух суток</label>
+          <p id="reminders-zone" class="hint">
+            В 08:00 и 18:00 по времени устройства.
+          </p>
+          <p id="reminders-status" role="status"></p>
+        </fieldset>
       </form>
     </dialog>
     <dialog id="owner-dialog">
@@ -327,6 +343,10 @@
         </button>
         <p class="eyebrow">ГЕНЕРАЛ ПОД НАБЛЮДЕНИЕМ</p>
         <h2 id="owner-name"></h2>
+        <button id="show-owner-territory" class="secondary">
+          Показать территорию
+        </button>
+        <p id="owner-territory-status" role="status"></p>
         <p id="owner-description"></p>
         <p id="owner-bones" class="owner-bones" aria-label="Баланс косточек">
         </p>
@@ -375,6 +395,26 @@
         его выкупленной части. Репарации входят в цену покупки. При физическом
         захвате через GPS репарации не выплачиваются.
       </p>
+      <p>
+        Средняя скорость GPS-прогулки не должна превышать 20 км/ч. Длина
+        траектории делится на время между первой и последней точками. При
+        превышении захват аннулируется.
+      </p>
+    </dialog>
+    <dialog id="shop-dialog" aria-labelledby="shop-title">
+      <div class="dialog-heading">
+        <h2 id="shop-title">Купить косточки</h2>
+        <button
+          id="close-shop"
+          class="close-button"
+          aria-label="Закрыть магазин"
+        >
+          ×
+        </button>
+      </div>
+      <p id="shop-status" role="status"></p>
+      <div id="shop-packages"></div>
+      <p class="hint">Помощь по платежам: команда /paysupport в чате бота.</p>
     </dialog>
     <dialog id="notifications-dialog" aria-labelledby="notifications-title">
       <div class="dialog-heading">

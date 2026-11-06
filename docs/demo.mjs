@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs?v=0.7.1";
+import { meters } from "./tracking.mjs?v=0.8.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -135,6 +135,8 @@ export function createDemoApi(storage, clipping) {
           mergeOwnPurchases: true,
           foreignBuyouts: true,
           notifications: true,
+          starShop: true,
+          largestTerritory: true,
         },
       };
     }
@@ -180,6 +182,24 @@ export function createDemoApi(storage, clipping) {
       }
       save(data);
       return { ok: true };
+    }
+    if (path === "/api/shop") {
+      return {
+        debt: 0,
+        packages: [[100, 10000], [250, 30000], [500, 80000], [1000, 200000]]
+          .map(([stars, bones]) => ({ id: String(stars), stars, bones })),
+      };
+    }
+    if (path.endsWith("/largest-territory")) {
+      const id = decodeURIComponent(path.split("/")[3]);
+      const largest = data.territories.filter((t) =>
+        t.ownerId === id
+      ).sort((a, b) => area(b.geometry) - area(a.geometry))[0];
+      return {
+        territory: largest
+          ? { ...largest, area: area(largest.geometry) }
+          : null,
+      };
     }
     if (path.startsWith("/api/pets/")) {
       const id = decodeURIComponent(path.split("/").at(-1)),

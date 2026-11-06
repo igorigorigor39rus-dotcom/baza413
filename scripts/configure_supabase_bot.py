@@ -52,8 +52,8 @@ def main():
     if not request(api+'/health').get('ok'):
         raise RuntimeError('Supabase ещё не готов.')
     config=request(api+'/api/config')
-    if not config.get('features',{}).get('autoLiveStart'):
-        raise RuntimeError('Сначала установите SQL и Edge Function v.0.6; нужны edited_message и callback_query.')
+    if not all(config.get('features',{}).get(key) for key in ('autoLiveStart','starShop','reminders','largestTerritory')):
+        raise RuntimeError('Сначала установите SQL и Edge Function v.0.8; нужны функции магазина, напоминаний и территорий.')
     if config.get('appUrl') != APP_URL:
         raise RuntimeError('В APP_URL в Supabase должен быть адрес из README, включая /baza413/ в конце.')
     # Пустой update проверяет секрет, но не отправляет сообщений.
@@ -65,9 +65,9 @@ def main():
     info = bot('getMe')
     # Проверяем совпадение локального токена и секрета Edge, не создавая профиль.
     request(api+'/api/me',headers={'Authorization':'tma '+init_data(token,info['id'])})
-    result = bot('setWebhook',{'url':api+'/webhook','secret_token':secret,'allowed_updates':['message','edited_message','callback_query'],'drop_pending_updates':False})
+    result = bot('setWebhook',{'url':api+'/webhook','secret_token':secret,'allowed_updates':['message','edited_message','callback_query','pre_checkout_query'],'drop_pending_updates':False})
     if not result: raise RuntimeError('Webhook не установлен.')
-    bot('setMyCommands',{'commands':[{'command':'start','description':'Открыть карту и профиль питомца'},{'command':'help','description':'Как играть'},{'command':'privacy','description':'О данных'},{'command':'status','description':'Фоновая прогулка: состояние'},{'command':'capture','description':'Захватить фоновый маршрут'},{'command':'cancel','description':'Отменить фоновую прогулку'}]})
+    bot('setMyCommands',{'commands':[{'command':'start','description':'Открыть карту и профиль питомца'},{'command':'help','description':'Как играть'},{'command':'privacy','description':'О данных'},{'command':'status','description':'Фоновая прогулка: состояние'},{'command':'capture','description':'Захватить фоновый маршрут'},{'command':'cancel','description':'Отменить фоновую прогулку'},{'command':'shop','description':'Купить косточки за Telegram Stars'},{'command':'paysupport','description':'Помощь по оплате'},{'command':'reminders_on','description':'Включить напоминания'},{'command':'reminders_off','description':'Отключить напоминания'}]})
     bot('setChatMenuButton',{'menu_button':{'type':'web_app','text':'Карта','web_app':{'url':APP_URL}}})
     print(f'Готово. Откройте @{info["username"]} и отправьте /start.')
     print('Компьютер теперь можно выключить: запросы обслуживает Supabase.')

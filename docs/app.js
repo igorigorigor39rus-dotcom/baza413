@@ -4,20 +4,22 @@ import {
   meters,
   photoSize,
   shouldAppend,
-} from "./tracking.mjs?v=0.7.1";
-import { createLocationSource } from "./location.mjs?v=0.7.1";
-import { createPurchasing } from "./purchasing.mjs?v=0.7.1";
-import { createMapFullscreen } from "./fullscreen.mjs?v=0.7.1";
-import { createNotifications } from "./notifications.mjs?v=0.7.1";
-import { setBonesText } from "./numbers.mjs?v=0.7.1";
-import { createClient } from "./client.mjs?v=0.7.1";
+} from "./tracking.mjs?v=0.8.0";
+import { createLocationSource } from "./location.mjs?v=0.8.0";
+import { createPurchasing } from "./purchasing.mjs?v=0.8.0";
+import { createShop } from "./shop.mjs?v=0.8.0";
+import { createPresence } from "./presence.mjs?v=0.8.0";
+import { createMapFullscreen } from "./fullscreen.mjs?v=0.8.0";
+import { createNotifications } from "./notifications.mjs?v=0.8.0";
+import { setBonesText } from "./numbers.mjs?v=0.8.0";
+import { createClient } from "./client.mjs?v=0.8.0";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=0.7.1";
-import { compressPhoto } from "./photo.mjs?v=0.7.1";
+} from "./appearance.mjs?v=0.8.0";
+import { compressPhoto } from "./photo.mjs?v=0.8.0";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -31,7 +33,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=0.7.1", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=0.8.0", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -68,6 +70,7 @@ let map,
 let purchasing;
 let fullscreen;
 let notifications;
+let shop, presence, ownerPet, focusedTerritory;
 const photoMarkers = [];
 function photoIcon(pet) {
   const size = photoSize(map.getZoom()), image = avatar(pet);
@@ -173,6 +176,12 @@ function render() {
   purchasing?.refresh();
   fullscreen?.refresh();
   notifications?.render();
+  shop?.render();
+  presence?.render();
+  $("show-my-territory").disabled = !state.pet ||
+    !state.config?.features?.largestTerritory;
+  $("show-owner-territory").disabled = !state.config?.features
+    ?.largestTerritory;
 }
 
 function initMap() {
@@ -258,6 +267,20 @@ function initMap() {
   });
   fullscreen = createMapFullscreen({ map, telegram, context: () => state });
   notifications = createNotifications({ api, context: () => state });
+  shop = createShop({
+    api,
+    context: () => state,
+    telegram,
+    onPaid: refreshWallet,
+    message,
+  });
+  presence = createPresence({ api, context: () => state });
+  map.on("dragstart", () => {
+    if (focusedTerritory) {
+      map.removeLayer(focusedTerritory);
+      focusedTerritory = null;
+    }
+  });
 }
 async function refreshMap() {
   const id = ++state.refreshId;
@@ -333,7 +356,11 @@ async function boot() {
       state.config.features?.crossingRoutes || client.isDemo
         ? "разрешены: захватывается площадь внутри внешних границ"
         : "станут доступны после обновления сервера"
-    }. Гуляйте только там, где это разрешено.`;
+    }. Гуляйте только там, где это разрешено.${
+      state.config.features?.speedLimit
+        ? " Средняя скорость — не выше 20 км/ч."
+        : ""
+    }`;
     $("server-notice").hidden = client.isDemo || client.isPython ||
       Boolean(
         state.config.features?.dossier && state.config.features?.chat &&
@@ -345,9 +372,11 @@ async function boot() {
     await refreshMap();
     void refreshWallet();
     void notifications.refresh();
-    await refreshLive();
+    const liveState = await refreshLive();
     message(
-      state.live
+      liveState?.result?.annulled
+        ? liveState.result.detail
+        : state.live
         ? "Фоновая прогулка восстановлена. Координаты поступают из трансляции Telegram."
         : state.config.demoMode
         ? "Это демо на этом устройстве. Попробуйте перезахватить участок Бублика без GPS."
@@ -384,6 +413,7 @@ function editProfile() {
   $("photo-input").value = "";
   $("photo-preview").src = p?.photo || PAW;
   $("profile-error").textContent = "";
+  $("profile-territory-status").textContent = "";
   $("profile-dialog").showModal();
 }
 $("profile-form").addEventListener("submit", async (event) => {
@@ -455,6 +485,8 @@ $("photo-input").addEventListener("change", () => {
 
 let ownerRequest = 0;
 async function showOwner(pet) {
+  ownerPet = pet;
+  $("owner-territory-status").textContent = "";
   const request = ++ownerRequest;
   $("owner-photo").src = pet.photo || PAW;
   $("owner-photo").alt = pet.name;
@@ -476,6 +508,63 @@ async function showOwner(pet) {
     }
   }
 }
+
+// Запрашиваем крупнейший участок отдельно: его может не быть в текущем окне карты.
+async function showLargestTerritory(pet, dialogId, statusId, buttonId) {
+  const button = $(buttonId);
+  button.disabled = true;
+  $(statusId).textContent = "Ищем самый большой участок…";
+  try {
+    const { territory } = await api(
+      `/api/pets/${encodeURIComponent(pet.id)}/largest-territory`,
+    );
+    if (!territory) {
+      $(statusId).textContent = "У этого генерала пока нет территории.";
+      return;
+    }
+    if (focusedTerritory) map.removeLayer(focusedTerritory);
+    focusedTerritory = L.geoJSON(territory.geometry, {
+      style: { color: pet.color, weight: 4, fillOpacity: .15 },
+    }).addTo(map);
+    $(dialogId).close();
+    fullscreen.open();
+    requestAnimationFrame(() =>
+      map.fitBounds(focusedTerritory.getBounds(), {
+        padding: [35, 65],
+        maxZoom: 18,
+      })
+    );
+    message(
+      `Самый большой участок: ${pet.name} · ${
+        Math.round(territory.area).toLocaleString("ru-RU")
+      } м²`,
+    );
+  } catch (e) {
+    $(statusId).textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+$("show-my-territory").addEventListener("click", () => {
+  if (state.pet) {
+    void showLargestTerritory(
+      state.pet,
+      "profile-dialog",
+      "profile-territory-status",
+      "show-my-territory",
+    );
+  }
+});
+$("show-owner-territory").addEventListener("click", () => {
+  if (ownerPet) {
+    void showLargestTerritory(
+      ownerPet,
+      "owner-dialog",
+      "owner-territory-status",
+      "show-owner-territory",
+    );
+  }
+});
 
 function positionSample(position) {
   return {
@@ -700,6 +789,10 @@ async function capture() {
       );
     }
   } catch (error) {
+    if (error.annulled) {
+      stopWalk({ notify: false });
+      telegram?.HapticFeedback?.notificationOccurred("error");
+    }
     message(error.message);
   } finally {
     busy(false);
@@ -896,7 +989,7 @@ $("chat-form").addEventListener("submit", async (e) => {
 setInterval(() => void refreshChat(), 10000);
 
 // Состояние фонового режима хранится на сервере, отдельно от браузерного GPS.
-let liveLoading = false, liveFittedId = null;
+let liveLoading = false, liveFittedId = null, shownAnnulment = null;
 async function refreshLive() {
   if (
     !state.connected || client.isDemo ||
@@ -907,6 +1000,10 @@ async function refreshLive() {
     const data = await api("/api/live/status");
     const wasLive = Boolean(state.live);
     state.live = data.walk;
+    if (data.result?.annulled && shownAnnulment !== data.result.walkId) {
+      shownAnnulment = data.result.walkId;
+      message(data.result.detail);
+    }
     liveRouteLayer.setLatLngs(
       (data.walk?.points ?? []).map((p) => [p.latitude, p.longitude]),
     );
@@ -937,6 +1034,7 @@ async function refreshLive() {
       await refreshWallet();
     }
     render();
+    return data;
   } catch (e) {
     $("live-status").textContent = e.message;
   } finally {
@@ -1000,6 +1098,7 @@ $("live-capture").addEventListener("click", async () => {
     );
     await refreshLive();
   } catch (e) {
+    if (e.annulled) await refreshLive();
     message(e.message);
   } finally {
     busy(false);

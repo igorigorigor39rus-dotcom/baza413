@@ -214,3 +214,21 @@ test("демо: физический демомаршрут не создаёт 
     0,
   );
 });
+
+test("клиент сохраняет признак окончательного аннулирования из ответа сервера", async () => {
+  const client = createClient({
+    location: { search: "" },
+    fetch: async () =>
+      Response.json({
+        annulled: true,
+        code: "SPEED_LIMIT",
+        detail: "Ай яй яй, захват аннулирован, играй честно",
+      }, { status: 422 }),
+  });
+  await assert.rejects(
+    client.api("/api/capture", { method: "POST" }),
+    (error) =>
+      error.annulled === true && error.code === "SPEED_LIMIT" &&
+      error.message.includes("захват аннулирован"),
+  );
+});

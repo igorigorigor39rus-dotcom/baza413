@@ -67,5 +67,5 @@ export function createMapFullscreen({ map, telegram, context }) {
   window.addEventListener("resize", () => {
     if (active) map.invalidateSize({ pan: true });
   });
-  return { refresh };
+  return { refresh, open: () => setActive(true) };
 }

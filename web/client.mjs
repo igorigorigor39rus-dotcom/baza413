@@ -29,11 +29,14 @@ export function createClient({ location, storage, clipping, fetch: send }) {
         throw new Error("Сервис ещё не настроен или вернул неожиданный ответ.");
       }
       if (!response.ok) {
-        throw new Error(
+        const error = new Error(
           typeof data.detail === "string"
             ? data.detail
             : "Не удалось выполнить запрос. Проверьте настройки Supabase.",
         );
+        error.code = data.code;
+        error.annulled = data.annulled === true;
+        throw error;
       }
       return data;
     },

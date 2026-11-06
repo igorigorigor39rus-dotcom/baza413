@@ -1,5 +1,7 @@
 import { decode, encode } from "npm:jpeg-js@0.4.4";
 import { ApiError, equalSecret, verifyInitData } from "./auth.ts";
+import { createCommerce } from "./commerce.ts";
+import { createEngagement } from "./engagement.ts";
 
 type Dependencies = {
   env: (name: string) => string | undefined;
@@ -162,7 +164,10 @@ export function createHandler(deps: Dependencies) {
     if (!response.ok) throw new ApiError(503, "Telegram временно недоступен.");
     const data = await response.json();
     if (!data.ok) throw new ApiError(503, "Telegram отклонил запрос бота.");
+    return data.result;
   }
+  const commerce = createCommerce({ rpc, bot });
+  const engagement = createEngagement({ rpc, bot, appUrl });
   async function deliverNotifications(filters: Record<string, unknown>) {
     try {
       // Очередь остаётся в БД. Следующее обращение обработает оставшееся,
@@ -215,7 +220,7 @@ export function createHandler(deps: Dependencies) {
     ],
   };
   const liveInstructions =
-    "Чтобы гулять с выключенным экраном: скрепка → Геопозиция → Транслировать геопозицию. Запись начнётся сама, когда погрешность GPS будет не больше 20 м. Разрешите Telegram точную геопозицию в фоне. После возвращения к старту в пределах 20 м нажмите «Захватить» ниже.\n\nTelegram требует включить трансляцию вручную; обычная отправка одной точки не записывает маршрут. Точки временно хранятся на сервере. Работа в фоне зависит от телефона и частоты обновлений Telegram.";
+    "Чтобы гулять с выключенным экраном: скрепка → Геопозиция → Транслировать геопозицию. Запись начнётся сама, когда погрешность GPS будет не больше 20 м. Разрешите Telegram точную геопозицию в фоне. После возвращения к старту в пределах 20 м нажмите «Захватить» ниже.\n\nTelegram требует включить трансляцию вручную; обычная отправка одной точки не записывает маршрут. Точки временно хранятся на сервере. Работа в фоне зависит от телефона и частоты обновлений Telegram. Средняя скорость прогулки — не выше 20 км/ч.";
   async function removePhoto(path: string | null | undefined) {
     if (!path || !PHOTO.test(path)) return;
     try {
@@ -230,6 +235,24 @@ export function createHandler(deps: Dependencies) {
     }
   }
   async function route(req: Request, path: string, url: URL) {
+    if (path === "/internal/scheduler" && req.method === "POST") {
+      const expected = env("SCHEDULER_SECRET") ?? "";
+      if (!/^[A-Za-z0-9_-]{32,256}$/.test(expected)) {
+        throw new ApiError(503, "Планировщик не настроен.");
+      }
+      if (
+        !await equalSecret(
+          req.headers.get("X-Scheduler-Secret") ?? "",
+          expected,
+        )
+      ) throw new ApiError(401, "Недействительный ключ планировщика.");
+      const result = await rpc("paws_reminders_generate", {});
+      const task = Promise.all([engagement.deliver(), deliverNotifications({})])
+        .then(() => {}).catch(() => {});
+      if (deps.defer) deps.defer(task);
+      else await task;
+      return { ok: true, ...result };
+    }
     if (path === "/webhook" && req.method === "POST") {
       const expected = env("WEBHOOK_SECRET") ?? "";
       if (!/^[A-Za-z0-9_-]{32,256}$/.test(expected)) {
@@ -242,6 +265,9 @@ export function createHandler(deps: Dependencies) {
         )
       ) throw new ApiError(401, "Недействительный webhook.");
       const update = await jsonBody(req);
+      if (await commerce.webhook(update) || await engagement.webhook(update)) {
+        return { ok: true };
+      }
       let m = (update.message ?? update.edited_message) as
         | Record<string, unknown>
         | undefined;
@@ -307,6 +333,7 @@ export function createHandler(deps: Dependencies) {
               ? number(location.live_period, 0, 2147483647)
               : null,
           });
+          if (!update.edited_message) await engagement.touch(id);
           if (result.first) {
             await bot("sendMessage", {
               chat_id: id,
@@ -371,15 +398,18 @@ export function createHandler(deps: Dependencies) {
         throw new ApiError(422, "Некорректный chat id.");
       }
       const command = m.text.trim().split(/\s/)[0].split("@")[0];
+      await engagement.touch(id);
       if (["/capture", "/cancel", "/status"].includes(command)) {
         try {
           if (command === "/capture") {
             const result = await rpc("paws_live_capture", { p_user: id });
             await bot("sendMessage", {
               chat_id: id,
-              text: `Территория захвачена: ${
-                Math.round(Number(result.area))
-              } м². Остановите трансляцию геопозиции в Telegram.`,
+              text: result.annulled
+                ? result.detail
+                : `Территория захвачена: ${
+                  Math.round(Number(result.area))
+                } м². Остановите трансляцию геопозиции в Telegram.`,
               reply_markup: walkButtons,
             });
           } else if (command === "/cancel") {
@@ -395,7 +425,9 @@ export function createHandler(deps: Dependencies) {
             const walk = result.walk;
             await bot("sendMessage", {
               chat_id: id,
-              text: !walk
+              text: result.result?.annulled
+                ? result.result.detail
+                : !walk
                 ? "Активной прогулки нет. Чтобы начать, включите трансляцию: скрепка → Геопозиция → Транслировать геопозицию."
                 : walk.error
                 ? walk.error
@@ -451,13 +483,16 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.7.1",
+        version: "0.8.0",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
         maxAccuracy: features.maxAccuracy ?? 15,
         demoRoute: null,
         appUrl,
+        schedulerConfigured: /^[A-Za-z0-9_-]{32,256}$/.test(
+          env("SCHEDULER_SECRET") ?? "",
+        ),
       };
     }
     if (path === "/health" && req.method === "GET") {
@@ -468,11 +503,13 @@ export function createHandler(deps: Dependencies) {
         !capabilities.autoLiveStart || !capabilities.crossingRoutes ||
         !capabilities.purchases || !capabilities.territoryLeaderboard ||
         !capabilities.unlimitedPurchases || !capabilities.mergeOwnPurchases ||
-        !capabilities.foreignBuyouts || !capabilities.notifications
+        !capabilities.foreignBuyouts || !capabilities.notifications ||
+        !capabilities.speedLimit || !capabilities.starShop ||
+        !capabilities.reminders || !capabilities.largestTerritory
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.0.7.1.");
+        throw new ApiError(503, "Установите полную миграцию v.0.8.");
       }
-      return { ok: true, version: "0.7.1" };
+      return { ok: true, version: "0.8.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -482,6 +519,48 @@ export function createHandler(deps: Dependencies) {
       );
     }
     const user = await verifyInitData(authorization.slice(4), token, now());
+    if (
+      (path === "/api/shop" && req.method === "GET") ||
+      (path.startsWith("/api/shop/orders/") && req.method === "GET") ||
+      (path === "/api/shop/invoice" && req.method === "POST")
+    ) {
+      return await commerce.api(
+        path,
+        user,
+        req.method === "POST" ? await jsonBody(req) : {},
+      );
+    }
+    if (path === "/api/activity" && req.method === "POST") {
+      const b = await jsonBody(req);
+      if (typeof b.timezone !== "string" || b.timezone.length > 100) {
+        throw new ApiError(422, "Укажите часовой пояс устройства.");
+      }
+      return await rpc("paws_activity", {
+        p_user: user,
+        p_timezone: b.timezone,
+      });
+    }
+    if (path === "/api/reminders" && req.method === "POST") {
+      const b = await jsonBody(req);
+      if (typeof b.enabled !== "boolean") {
+        throw new ApiError(422, "Некорректная настройка напоминаний.");
+      }
+      return await rpc("paws_reminders_set", {
+        p_user: user,
+        p_enabled: b.enabled,
+      });
+    }
+    if (
+      /^\/api\/pets\/\d+\/largest-territory$/.test(path) && req.method === "GET"
+    ) {
+      const petId = number(Number(path.split("/")[3]), 1, 2 ** 52 - 1);
+      return {
+        territory: await rpc("paws_largest_territory", {
+          p_user: user,
+          p_pet: petId,
+        }),
+      };
+    }
     if (path === "/api/notifications" && req.method === "GET") {
       const result = await rpc("paws_notifications", { p_user: user });
       await scheduleNotifications({});
@@ -839,7 +918,9 @@ export function createHandler(deps: Dependencies) {
       const url = new URL(req.url);
       const path =
         url.pathname.replace(/^\/(?:functions\/v1\/)?paws-api/, "") || "/";
-      return response(await route(req, path, url));
+      const result = await route(req, path, url);
+      // Отказ уже записан RPC в walks.result. Ответ 422 не откатывает его.
+      return response(result, result?.annulled === true ? 422 : 200);
     } catch (error) {
       if (error instanceof ApiError) {
         return response({ detail: error.message }, error.status);

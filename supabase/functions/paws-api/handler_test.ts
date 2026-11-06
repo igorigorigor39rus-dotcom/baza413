@@ -61,6 +61,11 @@ function fixture(
               mergeOwnPurchases: true,
               foreignBuyouts: true,
               notifications: true,
+              starShop: true,
+              reminders: true,
+              largestTerritory: true,
+              speedLimit: true,
+              maxSpeedKmh: 20,
               maxAccuracy: 20,
               closureMeters: 20,
               photoLimit: 1000000,
@@ -265,7 +270,9 @@ Deno.test("webhook: без секрета нет сообщений; /start со
       }),
     )).status === 200,
   );
-  const payload = JSON.parse(String(calls[0].options.body));
+  const payload = JSON.parse(
+    String(calls.find((c) => c.url.endsWith("/sendMessage"))!.options.body),
+  );
   assert(
     payload.reply_markup.inline_keyboard[0][0].web_app.url ===
       `${ORIGIN}/baza413/`,
@@ -419,7 +426,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.7.1" && config.features.chat === false &&
+    config.version === "0.8.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -869,4 +876,143 @@ Deno.test("v071: GPS-захват вызывает только capture без �
     )).status === 200,
   );
   assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_capture"));
+});
+
+const SPEED_WARNING = "Ай яй яй, захват аннулирован, играй честно";
+const speedRefusal = {
+  annulled: true,
+  code: "SPEED_LIMIT",
+  walkId: "00000000-0000-0000-0000-000000000001",
+  detail: SPEED_WARNING,
+  averageSpeedKmh: 40,
+};
+Deno.test("v08: оба API захвата возвращают окончательный отказ 422 после RPC", async () => {
+  const f = fixture(() => Response.json(speedRefusal));
+  const points = [0, 1, 2, 3].map((i) => ({
+    latitude: 54,
+    longitude: 20,
+    accuracy: 20,
+    timestamp: NOW - 3 + i,
+  }));
+  for (
+    const [path, body] of [["/api/capture", {
+      walk_id: speedRefusal.walkId,
+      points,
+    }], ["/api/live/capture", undefined]] as const
+  ) {
+    const response = await f.handler(await request(path, "POST", body));
+    const data = await response.json();
+    assert(
+      response.status === 422 && data.annulled && data.code === "SPEED_LIMIT" &&
+        data.detail === SPEED_WARNING,
+    );
+  }
+  assert(
+    f.calls.length === 2 &&
+      f.calls.every((c) =>
+        c.url.includes("paws_capture") || c.url.includes("paws_live_capture")
+      ),
+  );
+});
+Deno.test("v08: бот сообщает об аннулировании без NaN и подтверждает webhook", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.includes("api.telegram.org")
+        ? { ok: true, result: {} }
+        : speedRefusal,
+    )
+  );
+  const response = await f.handler(
+    await request("/webhook", "POST", {
+      message: {
+        text: "/capture",
+        from: { id: 42 },
+        chat: { id: 42, type: "private" },
+      },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  assert(response.status === 200);
+  const message = JSON.parse(
+    String(f.calls.find((c) => c.url.endsWith("/sendMessage"))!.options.body),
+  );
+  assert(message.text === SPEED_WARNING);
+});
+Deno.test("v08: статус сохраняет причину аннулирования после закрытия приложения", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.includes("api.telegram.org")
+        ? { ok: true, result: {} }
+        : { walk: null, result: speedRefusal },
+    )
+  );
+  const response = await f.handler(await request("/api/live/status"));
+  assert(response.status === 200);
+  assert((await response.json()).result.annulled);
+  await f.handler(
+    await request("/webhook", "POST", {
+      message: {
+        text: "/status",
+        from: { id: 42 },
+        chat: { id: 42, type: "private" },
+      },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  const message = JSON.parse(
+    String(f.calls.find((c) => c.url.endsWith("/sendMessage"))!.options.body),
+  );
+  assert(message.text === SPEED_WARNING);
+});
+
+Deno.test("v08: scheduler requires separate secret before queue access", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_reminders_generate")
+        ? { queued: 1 }
+        : { messages: [] },
+    )
+  );
+  const req = (secret: string) =>
+    new Request(`${BASE}/functions/v1/paws-api/internal/scheduler`, {
+      method: "POST",
+      headers: { "X-Scheduler-Secret": secret },
+      body: "{}",
+    });
+  assert((await f.handler(req(SECRET))).status === 503);
+  assert(f.calls.length === 0);
+  f.env.SCHEDULER_SECRET = SECRET;
+  assert((await f.handler(req("wrong"))).status === 401);
+  assert(f.calls.length === 0);
+  assert((await f.handler(req(SECRET))).status === 200);
+  assert(f.calls.some((c) => c.url.endsWith("/paws_reminders_generate")));
+  assert(f.calls.some((c) => c.url.endsWith("/paws_reminders_claim")));
+});
+Deno.test("v08: presence and largest territory use verified caller and separate pet ID", async () => {
+  const f = fixture();
+  assert(
+    (await f.handler(
+      await request("/api/activity", "POST", {
+        timezone: "Europe/Kaliningrad",
+        userId: 99,
+      }),
+    )).status === 200,
+  );
+  let args = JSON.parse(String(f.calls[0].options.body));
+  assert(args.p_user === 42 && args.p_timezone === "Europe/Kaliningrad");
+  f.calls.length = 0;
+  assert(
+    (await f.handler(await request("/api/pets/43/largest-territory")))
+      .status === 200,
+  );
+  args = JSON.parse(String(f.calls[0].options.body));
+  assert(
+    f.calls[0].url.endsWith("/paws_largest_territory") && args.p_user === 42 &&
+      args.p_pet === 43,
+  );
+  const before = f.calls.length;
+  assert(
+    (await f.handler(
+      await request("/api/reminders", "POST", { enabled: "false" }),
+    )).status === 422,
+  );
+  assert(f.calls.length === before);
 });

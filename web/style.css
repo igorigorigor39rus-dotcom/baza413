@@ -1113,3 +1113,8 @@ body.busy #map-fullscreen {
     var(--purchase-panel-height, 220px) + 28px + env(safe-area-inset-bottom)
   );
 }
+
+/* Крупные кнопки пакетов Stars удобны для оплаты с телефона. */
+#shop-packages {display:grid;gap:12px;margin:18px 0}
+#shop-packages button {min-height:52px}
+#reminders-settings input[type=checkbox] {width:auto;accent-color:#8eb3df}
