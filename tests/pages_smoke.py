@@ -70,7 +70,7 @@ def main():
         page.wait_for_function("() => document.querySelector('#chat-messages').textContent.includes('Сообщение агента')")
         assert page.locator('#chat-messages img').count()==0
         page.locator('#close-chat').click()
-        assert '🦴/час' in page.locator('#wallet-rate').inner_text()
+        assert '🦴/сутки' in page.locator('#wallet-rate').inner_text()
         page.locator('#open-top').click();page.locator('#top-body tr').first.wait_for();assert 1<=page.locator('#top-body tr').count()<=10;page.locator('#close-top').click()
         page.reload(wait_until='networkidle')
         assert 'Луна' in page.locator('#walk-title').inner_text()
@@ -130,7 +130,7 @@ def main():
             route.fulfill(content_type='application/json',body=json.dumps(data),headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'})
         modern.route('https://*.supabase.co/**',new_api)
         active=modern.new_page();active.goto(base,wait_until='networkidle')
-        assert active.locator('#server-notice').is_hidden()
+        assert active.locator('#server-notice').is_visible()
         active.locator('#profile-button').click()
         for field in ['pet-hue','pet-saturation','pet-opacity','pet-pattern']:assert active.locator('#'+field).is_enabled()
         active.locator('#pet-hue').evaluate("el=>{el.value=230;el.dispatchEvent(new Event('input',{bubbles:true}));}")
@@ -140,9 +140,9 @@ def main():
         active.wait_for_function("() => document.querySelector('#owner-bones').textContent.includes('876')")
         assert ''.join(active.locator('#owner-bones').inner_text().split())=='🦴9876'
         active.locator('#owner-done').click();active.locator('#open-chat').click()
-        active.locator('#chat-text').fill('Проверка v.0.4');active.locator('#send-chat').click()
-        active.wait_for_function("() => document.querySelector('#chat-messages').textContent.includes('Проверка v.0.4')")
-        assert chat[0]['text']=='Проверка v.0.4'
+        assert active.locator('#send-chat').is_disabled()
+        assert 'v.0.9' in active.locator('#chat-access').inner_text()
+        assert chat==[]
         active.locator('#close-chat').click();active.locator('#map-provider').select_option('relief')
         active.wait_for_function("() => document.querySelector('.leaflet-control-attribution').textContent.includes('OpenTopoMap')")
         modern.close()

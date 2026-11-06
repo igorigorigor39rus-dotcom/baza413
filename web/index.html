@@ -15,6 +15,20 @@
     />
     <link rel="icon" href="./assets/paw.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./vendor/leaflet/leaflet.css" />
+    <link
+      rel="preload"
+      href="./assets/fonts/BalsamiqSans-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./assets/fonts/BalsamiqSans-Bold.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
     <link rel="stylesheet" href="./style.css" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
     <script src="./vendor/leaflet/leaflet.js" defer></script>
@@ -55,6 +69,7 @@
         </div>
         <button id="open-chat" class="secondary">Оперативная связь</button>
       </div>
+      <p id="wallet-payout" class="hint" role="status"></p>
       <button id="open-top" class="text-button">
         ТОП-10 Генералов · 🦴
       </button>
@@ -69,10 +84,10 @@
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_8.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_9.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.8</a>
+        >Инструкция v.0.9</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -145,13 +160,25 @@
             <strong id="gap">0 м</strong></span><span>GPS <strong id="accuracy"
             >—</strong></span>
         </div>
-        <button id="start-button" class="primary" disabled>
-          Начать захват <span>↗</span>
-        </button>
-        <button id="live-start" class="secondary">
-          Гулять с выключенным экраном
-        </button>
-        <p id="live-note" class="hint"></p>
+        <div class="capture-guide">
+          <strong>Захват — через чат бота</strong>
+          <ol>
+            <li>Откройте чат бота и нажмите 📎.</li>
+            <li>Геопозиция → Транслировать геопозицию.</li>
+            <li>Пройдите замкнутый маршрут и нажмите «Захватить» в боте.</li>
+          </ol>
+          <button id="goto-bot" class="primary" disabled>
+            Открыть чат бота <span class="action-glyph" aria-hidden="true"><svg
+                viewBox="0 0 24 24"
+              >
+                <path d="M4 20 19 5M6 5l13-.3.3 13" />
+              </svg></span>
+          </button>
+        </div>
+        <p id="live-note" class="hint">
+          Запись начнётся с первой точной точки GPS. Работу с выключенным
+          экраном обеспечивает Telegram; нужны разрешения геолокации в фоне.
+        </p>
         <section id="live-panel" hidden>
           <h3>Фоновая прогулка Telegram</h3>
           <p id="live-status" role="status"></p>
@@ -171,7 +198,10 @@
           </button>
         </section>
         <button id="capture-button" class="primary" hidden>
-          Захватить территорию <span>✓</span>
+          Захватить демоучасток <span
+            class="action-glyph"
+            aria-hidden="true"
+          ><svg viewBox="0 0 24 24"><path d="m4 12 5.5 6 11-13" /></svg></span>
         </button>
         <button id="demo-button" class="secondary" hidden>
           Пройти демомаршрут
@@ -197,9 +227,43 @@
           ×
         </button>
       </div>
-      <p class="muted">
-        Общий канал Генералов. Сообщения видны всем участникам.
-      </p>
+      <div class="chat-tabs" role="tablist" aria-label="Категория чата">
+        <button
+          id="chat-district"
+          type="button"
+          role="tab"
+          aria-controls="chat-messages"
+          aria-selected="true"
+        >
+          Район
+        </button>
+        <button
+          id="chat-city"
+          type="button"
+          role="tab"
+          aria-controls="chat-messages"
+          aria-selected="false"
+        >
+          Город
+        </button>
+        <button
+          id="chat-world"
+          type="button"
+          role="tab"
+          aria-controls="chat-messages"
+          aria-selected="false"
+        >
+          Мир
+        </button>
+      </div>
+      <aside id="chat-world-note" class="comic-note" hidden>
+        <strong>Пропуск в мировой «гав»</strong>
+        <p>
+          Читать могут все. Для сообщений нужно от <b>1 000 000 м²</b> своей
+          земли (100 га). Масштаб лая подтверждается гектарами 🐾
+        </p>
+      </aside>
+      <p id="chat-access" class="muted" role="status"></p>
       <div id="chat-messages" role="log" aria-live="polite"></div>
       <p id="chat-error" class="error" role="status"></p>
       <form id="chat-form">
@@ -297,7 +361,10 @@
             ></label>
           <label>Узор<select id="pet-pattern" name="pattern">
               <option value="solid">Сплошной</option>
-              <option value="camo">Камуфляж</option>
+              <option value="camo">Камуфляж · классический</option>
+              <option value="digital">Камуфляж · цифровой</option>
+              <option value="tiger">Камуфляж · тигровый</option>
+              <option value="flecktarn">Камуфляж · Flecktarn</option>
               <option value="stripes">Полоски</option>
               <option value="grid">Сетка</option>
             </select></label>
@@ -312,7 +379,11 @@
         </fieldset>
         <p id="profile-error" class="error" role="alert"></p>
         <button type="submit" id="save-profile" class="primary">
-          Сохранить досье <span>✓</span>
+          Сохранить досье <span class="action-glyph" aria-hidden="true"><svg
+              viewBox="0 0 24 24"
+            >
+              <path d="m4 12 5.5 6 11-13" />
+            </svg></span>
         </button>
         <button type="button" id="show-my-territory" class="secondary">
           Показать территорию
@@ -373,17 +444,20 @@
           ×
         </button>
       </div>
-      <p><strong>1 м² × 1 час = 1 🦴</strong></p>
+      <p><strong>10 м² × 24 часа = 1 🦴</strong></p>
       <p>
-        Начисление идёт на сервере и продолжается, когда приложение закрыто.
-        Дробная часть накапливается; в счётчике показано целое число.
+        Доход учитывается на сервере, даже когда приложение закрыто. Выплата
+        поступает раз в 24 часа с начала начислений. Дробная часть
+        накапливается; в счётчике показано целое число.
       </p>
       <p>
-        После перезахвата доход меняется по оставшейся площади. Уже заработанные
-        🦴 сохраняются.
+        Доход за неполные сутки считается пропорционально времени владения и
+        поступает в следующую суточную выплату. После перезахвата ставка
+        меняется по оставшейся площади. Уже заработанные 🦴 сохраняются.
       </p>
       <p>
-        100 м² дают 100 🦴 в час; 50 м² — 50 🦴 в час.
+        100 м² дают 10 🦴 в сутки; 50 м² — 5 🦴 в сутки. Дробная часть не
+        теряется.
       </p>
       <p>
         Нейтральную и чужую землю можно выкупить: 1 м² = 10 🦴. Итоговая

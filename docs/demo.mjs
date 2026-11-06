@@ -1,4 +1,5 @@
-import { meters } from "./tracking.mjs?v=0.8.0";
+import { dailyWallet } from "./income.mjs?v=0.9.0";
+import { meters } from "./tracking.mjs?v=0.9.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -137,10 +138,15 @@ export function createDemoApi(storage, clipping) {
           notifications: true,
           starShop: true,
           largestTerritory: true,
+          geoChat: true,
+          dailyIncome: true,
+          incomePeriodSeconds: 86400,
+          sqmPerBone: 10,
         },
       };
     }
     const data = load(), method = options.method ?? "GET";
+    const requestUrl = new URL(path, "https://demo.invalid");
     const settleFor = (id) => {
       data.wallets ??= {};
       if (data.pet && data.wallet && !data.wallets[data.pet.id]) {
@@ -150,15 +156,28 @@ export function createDemoApi(storage, clipping) {
         (sum, t) => sum + area(t.geometry),
         0,
       );
-      const w = data.wallets[id] ??= {
+      let w = data.wallets[id] ??= {
         balance: 0,
-        rate,
+        rate: rate / 10,
+        pending: 0,
+        incomeCycleAt: null,
+        incomePeriodSeconds: 86400,
         asOf: Date.now() / 1000,
       };
       const now = Date.now() / 1000;
-      w.balance += w.rate * Math.max(0, now - w.asOf) / 3600;
-      w.asOf = now;
-      w.rate = rate;
+      // Старое демо переводим один раз, сохранив заработанный часовой доход.
+      if (w.incomePeriodSeconds !== 86400) {
+        w.balance += w.rate * Math.max(0, now - w.asOf) / 3600;
+        w = {
+          ...w,
+          asOf: now,
+          incomeCycleAt: rate > 0 ? now : null,
+          pending: 0,
+          incomePeriodSeconds: 86400,
+        };
+      }
+      w = dailyWallet(w, rate, now);
+      data.wallets[id] = w;
       return w;
     };
     if (path === "/api/wallet") {
@@ -373,32 +392,76 @@ export function createDemoApi(storage, clipping) {
         geometry: combined,
       });
       wallet.rate = data.territories.filter((t) => t.ownerId === data.pet.id)
-        .reduce((sum, t) => sum + area(t.geometry), 0);
+        .reduce((sum, t) => sum + area(t.geometry), 0) / 10;
       for (const id of foreign.keys()) {
         data.wallets[id].rate = data.territories.filter((t) => t.ownerId === id)
-          .reduce((sum, t) => sum + area(t.geometry), 0);
+          .reduce((sum, t) => sum + area(t.geometry), 0) / 10;
       }
       data.purchases ??= {};
       data.purchases[b.requestId] = receipt;
+      settleFor(data.pet.id);
       save(data);
       return receipt;
     }
-    if (path === "/api/chat" && method === "GET") {
-      return { messages: data.messages ?? [] };
-    }
-    if (path === "/api/chat" && method === "POST") {
-      if (!data.pet) throw new Error("Сначала создайте досье.");
-      const text = JSON.parse(options.body).text?.trim();
+    if (requestUrl.pathname === "/api/chat") {
+      const body = method === "POST" ? JSON.parse(options.body) : {};
+      const channel = method === "POST"
+        ? (body.channel ?? "world")
+        : (requestUrl.searchParams.get("channel") ?? "world");
+      if (!["district", "city", "world"].includes(channel)) {
+        throw new Error("Выберите Район, Город или Мир.");
+      }
+      const own = data.territories.filter((t) => t.ownerId === data.pet?.id)
+        .sort((a, b) => area(b.geometry) - area(a.geometry));
+      const sqm = own.reduce((s, t) => s + area(t.geometry), 0),
+        radius = channel === "district" ? 2000 : 20000;
+      const canRead = channel === "world" || own.length > 0,
+        canPost = Boolean(data.pet) &&
+          (channel === "world" ? sqm >= 1000000 : own.length > 0);
+      const reason = !data.pet
+        ? "Сначала создайте досье питомца."
+        : !canRead
+        ? "Для локального чата нужна своя территория. Можно читать Мир."
+        : !canPost
+        ? "Мир читают все. Для отправки сообщений нужно владеть минимум 1 000 000 м²."
+        : null;
+      if (method === "GET") {
+        return {
+          channel,
+          canRead,
+          canPost,
+          reason,
+          messages: (data.messages ?? []).filter((m) => {
+            if ((m.channel ?? "world") !== channel || !canRead) return false;
+            if (channel === "world") return true;
+            const theirs = data.territories.filter((t) =>
+              t.ownerId === m.pet.id
+            ).sort((a, b) =>
+              area(b.geometry) - area(a.geometry)
+            )[0];
+            if (!theirs) return false;
+            const a = marker(own[0].geometry), b = marker(theirs.geometry);
+            return meters({ latitude: a[0], longitude: a[1] }, {
+              latitude: b[0],
+              longitude: b[1],
+            }) <= radius;
+          }),
+        };
+      }
+      if (!canPost) throw new Error(reason);
+      const text = body.text?.trim();
       if (!text || text.length > 500) {
         throw new Error("Сообщение: от 1 до 500 символов.");
       }
       data.messages ??= [];
       const now = Date.now() / 1000;
-      if (data.messages.at(-1)?.createdAt > now - 3) {
-        throw new Error("Подождите 3 секунды.");
-      }
+      if (
+        data.messages.filter((m) => m.pet?.id === data.pet.id).at(-1)
+          ?.createdAt > now - 3
+      ) throw new Error("Подождите 3 секунды.");
       data.messages.push({
         id: String(Date.now()),
+        channel,
         text,
         createdAt: now,
         pet: data.pet,
@@ -473,8 +536,9 @@ export function createDemoApi(storage, clipping) {
       data.territories = [...remaining, t];
       for (const id of owners) {
         data.wallets[id].rate = data.territories.filter((t) => t.ownerId === id)
-          .reduce((sum, t) => sum + area(t.geometry), 0);
+          .reduce((sum, t) => sum + area(t.geometry), 0) / 10;
       }
+      for (const id of owners) settleFor(id);
       save(data);
       return { id: t.id, area: area(t.geometry) };
     }

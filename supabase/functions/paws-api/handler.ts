@@ -452,12 +452,12 @@ export function createHandler(deps: Dependencies) {
         await bot("sendMessage", {
           chat_id: id,
           text:
-            "Сохраняются Telegram ID, профиль питомца, фото и контуры захваченных территорий. Профиль и контуры видны другим участникам. История выкупа и репараций сохраняется; уведомление доступно только получателю. Обычный GPS-маршрут проверяется без сохранения. В фоновом режиме точки временно сохраняются в базе до завершения/отмены; просроченные маршруты очищаются при обращениях к фоновому API. Не указывайте домашний адрес в профиле.",
+            "Сохраняются Telegram ID, профиль питомца, фото и контуры захваченных территорий. Профиль и контуры видны другим участникам. История выкупа и репараций сохраняется; уведомление доступно только получателю. Маршрут поступает только из трансляции геопозиции Telegram; точки временно сохраняются в базе до завершения/отмены; просроченные маршруты очищаются при обращениях к фоновому API. Не указывайте домашний адрес в профиле.",
         });
       } else {await bot("sendMessage", {
           chat_id: id,
           text:
-            `🐾 DogWars. Захвати мир!\n\nСоздайте досье питомца по кнопке «Карта и досье».\n\n${liveInstructions}\n\nОбычная запись с открытой картой тоже доступна. /privacy — о данных.`,
+            `🐾 DogWars. Захвати мир!\n\nСоздайте досье питомца по кнопке «Карта и досье».\n\n${liveInstructions}\n\nЗахват доступен только через трансляцию геопозиции в этом чате. /privacy — о данных.`,
           reply_markup: walkButtons,
         });}
       return { ok: true };
@@ -483,7 +483,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.8.0",
+        version: "0.9.0",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -505,11 +505,14 @@ export function createHandler(deps: Dependencies) {
         !capabilities.unlimitedPurchases || !capabilities.mergeOwnPurchases ||
         !capabilities.foreignBuyouts || !capabilities.notifications ||
         !capabilities.speedLimit || !capabilities.starShop ||
-        !capabilities.reminders || !capabilities.largestTerritory
+        !capabilities.reminders || !capabilities.largestTerritory ||
+        !capabilities.dailyIncome || !capabilities.geoChat ||
+        !capabilities.liveOnly || !capabilities.captureHelp ||
+        !capabilities.extraCamouflage
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.0.8.");
+        throw new ApiError(503, "Установите полную миграцию v.0.9.");
       }
-      return { ok: true, version: "0.8.0" };
+      return { ok: true, version: "0.9.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -681,7 +684,8 @@ export function createHandler(deps: Dependencies) {
           opacity = number(b.opacity, .15, .8);
         if (
           !Number.isInteger(hue) || !Number.isInteger(saturation) ||
-          !["solid", "stripes", "grid", "camo"].includes(String(b.pattern))
+          !["solid", "stripes", "grid", "camo", "digital", "tiger", "flecktarn"]
+            .includes(String(b.pattern))
         ) throw new ApiError(422, "Некорректный стиль заливки.");
         return profile(
           await rpc("paws_save_dossier", {
@@ -715,7 +719,18 @@ export function createHandler(deps: Dependencies) {
       if (!/^\d{1,18}$/.test(after)) {
         throw new ApiError(422, "Некорректный курсор чата.");
       }
-      const result = await rpc("paws_chat", { p_user: user, p_after: after });
+      const channel = url.searchParams.get("channel") ?? "world";
+      if (
+        typeof channel !== "string" ||
+        !["district", "city", "world"].includes(channel)
+      ) {
+        throw new ApiError(422, "Выберите Район, Город или Мир.");
+      }
+      const result = await rpc("paws_chat_room", {
+        p_user: user,
+        p_channel: channel,
+        p_after: after,
+      });
       result.messages = result.messages.map((m: Record<string, unknown>) => ({
         ...m,
         pet: pet(m.pet as Pet),
@@ -728,7 +743,18 @@ export function createHandler(deps: Dependencies) {
         typeof b.text !== "string" || !b.text.trim() ||
         b.text.trim().length > 500
       ) throw new ApiError(422, "Сообщение: от 1 до 500 символов.");
-      return await rpc("paws_send", { p_user: user, p_text: b.text.trim() });
+      const channel = b.channel ?? "world";
+      if (
+        typeof channel !== "string" ||
+        !["district", "city", "world"].includes(channel)
+      ) {
+        throw new ApiError(422, "Выберите Район, Город или Мир.");
+      }
+      return await rpc("paws_send_room", {
+        p_user: user,
+        p_channel: channel,
+        p_text: b.text.trim(),
+      });
     }
     if (path === "/api/me/photo" && req.method === "POST") {
       const bytes = await readBody(req);
@@ -859,7 +885,10 @@ export function createHandler(deps: Dependencies) {
       return result;
     }
     if (path === "/api/walks" && req.method === "POST") {
-      return await rpc("paws_start", { p_user: user });
+      throw new ApiError(
+        410,
+        "Для захвата включите трансляцию: 📎 → Геопозиция → Транслировать геопозицию в чате бота.",
+      );
     }
     if (path.startsWith("/api/walks/") && req.method === "DELETE") {
       const id = path.split("/").at(-1) ?? "";
@@ -867,26 +896,10 @@ export function createHandler(deps: Dependencies) {
       return await rpc("paws_cancel", { p_user: user, p_walk: id });
     }
     if (path === "/api/capture" && req.method === "POST") {
-      const b = await jsonBody(req);
-      if (
-        typeof b.walk_id !== "string" || !UUID.test(b.walk_id) ||
-        !Array.isArray(b.points) || b.points.length < 4 ||
-        b.points.length > 5000
-      ) throw new ApiError(422, "Некорректная прогулка или число GPS-точек.");
-      const points = b.points.map((raw) => {
-        const p = object(raw);
-        return {
-          latitude: number(p.latitude, -85, 85),
-          longitude: number(p.longitude, -180, 180),
-          accuracy: number(p.accuracy, 0, 20),
-          timestamp: number(p.timestamp, 0, 1e12),
-        };
-      });
-      return await rpc("paws_capture", {
-        p_user: user,
-        p_walk: b.walk_id,
-        p_points: points,
-      });
+      throw new ApiError(
+        410,
+        "Захват доступен только через трансляцию геопозиции в чате бота.",
+      );
     }
     throw new ApiError(404, "Такого действия нет.");
   }

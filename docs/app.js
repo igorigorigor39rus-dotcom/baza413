@@ -1,25 +1,21 @@
-import {
-  goodFix,
-  length,
-  meters,
-  photoSize,
-  shouldAppend,
-} from "./tracking.mjs?v=0.8.0";
-import { createLocationSource } from "./location.mjs?v=0.8.0";
-import { createPurchasing } from "./purchasing.mjs?v=0.8.0";
-import { createShop } from "./shop.mjs?v=0.8.0";
-import { createPresence } from "./presence.mjs?v=0.8.0";
-import { createMapFullscreen } from "./fullscreen.mjs?v=0.8.0";
-import { createNotifications } from "./notifications.mjs?v=0.8.0";
-import { setBonesText } from "./numbers.mjs?v=0.8.0";
-import { createClient } from "./client.mjs?v=0.8.0";
+import { length, meters, photoSize } from "./tracking.mjs?v=0.9.0";
+import { createLocationSource } from "./location.mjs?v=0.9.0";
+import { createPurchasing } from "./purchasing.mjs?v=0.9.0";
+import { createChat } from "./chat.mjs?v=0.9.0";
+import { formatDailyRate, payoutText } from "./income.mjs?v=0.9.0";
+import { createShop } from "./shop.mjs?v=0.9.0";
+import { createPresence } from "./presence.mjs?v=0.9.0";
+import { createMapFullscreen } from "./fullscreen.mjs?v=0.9.0";
+import { createNotifications } from "./notifications.mjs?v=0.9.0";
+import { setBonesText } from "./numbers.mjs?v=0.9.0";
+import { createClient } from "./client.mjs?v=0.9.0";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=0.8.0";
-import { compressPhoto } from "./photo.mjs?v=0.8.0";
+} from "./appearance.mjs?v=0.9.0";
+import { compressPhoto } from "./photo.mjs?v=0.9.0";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -33,7 +29,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=0.8.0", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=0.9.0", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -50,12 +46,8 @@ const state = {
   walk: null,
   route: [],
   latest: null,
-  watcher: null,
-  generation: 0,
-  starting: false,
   previewUrl: null,
   refreshId: 0,
-  wake: null,
   live: null,
   buying: false,
 };
@@ -114,14 +106,6 @@ function avatar(pet) {
 }
 function render() {
   const walking = Boolean(state.walk);
-  $("start-button").hidden = Boolean(state.live) || walking ||
-    (state.config?.localDemo && Boolean(state.pet));
-  $("start-button").disabled = state.busy || state.buying || !state.connected;
-  $("start-button").firstChild.textContent = state.starting
-    ? "Подключаем GPS… "
-    : state.pet
-    ? "Начать захват "
-    : "Создать профиль питомца ";
   $("capture-button").hidden = !walking;
   const fresh = state.latest &&
     Date.now() / 1000 - state.latest.timestamp <= 15;
@@ -139,16 +123,9 @@ function render() {
   $("demo-button").textContent = state.walk?.demo
     ? `Следующая точка · ${state.route.length}/${state.config.demoRoute.length}`
     : "Пройти демомаршрут";
-  $("live-start").hidden = Boolean(state.live);
-  $("live-start").disabled = state.busy || state.buying || walking ||
-    !state.connected ||
-    client.isDemo || !state.config?.features?.liveTracking;
-  $("live-note").hidden = client.isDemo || Boolean(state.live);
-  $("live-note").textContent = state.config?.features?.liveTracking
-    ? state.config.features.autoLiveStart
-      ? "Включите трансляцию в чате бота — запись начнётся сама. Работа с выключенным экраном зависит от телефона и разрешений."
-      : "Отдельный режим через трансляцию геопозиции Telegram. Для упрощённого запуска обновите сервер до v.0.6."
-    : "Режим с выключенным экраном станет доступен после обновления сервера.";
+  $("goto-bot").hidden = client.isDemo;
+  $("goto-bot").disabled = state.busy || state.buying || !state.connected;
+  $("live-note").hidden = client.isDemo;
   $("live-panel").hidden = !state.live;
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
@@ -156,8 +133,7 @@ function render() {
     state.live.points.length < 4;
   $("live-cancel").disabled = state.busy;
   $("profile-button").disabled = Boolean(state.live) || !state.connected ||
-    walking || state.busy ||
-    state.starting;
+    walking || state.busy;
   $("walk-stats").hidden = !walking;
   $("walk-title").textContent = walking
     ? "Идём за новыми открытиями"
@@ -364,7 +340,9 @@ async function boot() {
     $("server-notice").hidden = client.isDemo || client.isPython ||
       Boolean(
         state.config.features?.dossier && state.config.features?.chat &&
-          state.config.features?.publicWallet,
+          state.config.features?.publicWallet &&
+          state.config.features?.dailyIncome &&
+          state.config.features?.geoChat && state.config.features?.liveOnly,
       );
     $("mode-banner").hidden = !state.config.demoMode;
     await refreshMe();
@@ -380,7 +358,7 @@ async function boot() {
         ? "Фоновая прогулка восстановлена. Координаты поступают из трансляции Telegram."
         : state.config.demoMode
         ? "Это демо на этом устройстве. Попробуйте перезахватить участок Бублика без GPS."
-        : "Обойдите участок и вернитесь к старту. Во время прогулки оставляйте мини-приложение открытым.",
+        : "Обойдите участок и вернитесь к старту. Для записи маршрута включите трансляцию геопозиции в чате бота.",
     );
     render();
     if (!state.pet) editProfile();
@@ -601,130 +579,12 @@ function drawRoute() {
   }
   render();
 }
-async function keepAwake() {
-  try {
-    state.wake = await navigator.wakeLock?.request("screen");
-  } catch {
-    /* WebView может не поддерживать Wake Lock. */
-  }
-}
-function stopWalk({ notify = true } = {}) {
-  state.generation++;
-  state.starting = false;
-  state.watcher?.();
-  state.watcher = null;
-  const walk = state.walk;
+// Локальный демо-маршрут не использует GPS и не попадает в общую карту.
+function stopWalk() {
   state.walk = null;
   state.route = [];
   state.latest = null;
-  if (walk && !walk.demo && notify) {
-    api(`/api/walks/${walk.id}`, { method: "DELETE", keepalive: true }).catch(
-      () => {},
-    );
-  }
-  if (state.wake) state.wake.release().catch(() => {});
-  state.wake = null;
-  telegram?.disableClosingConfirmation?.();
   drawRoute();
-}
-function onPosition(position, generation) {
-  if (generation !== state.generation || !state.walk) return;
-  const p = positionSample(position);
-  if (!goodFix(p, maxAccuracy()) || Date.now() / 1000 - p.timestamp > 15) {
-    state.latest = null;
-    message(
-      `Слабый GPS. Выйдите на открытое место: нужна точность до ${maxAccuracy()} м.`,
-    );
-    render();
-    return;
-  }
-  state.latest = p;
-  if (shouldAppend(state.route.at(-1), p)) {
-    if (state.route.length >= 5000) {
-      stopWalk();
-      message("Достигнут предел 5000 точек. Начните более короткую прогулку.");
-      return;
-    }
-    state.route.push(p);
-    drawRoute();
-  }
-  if (positionMarker) positionMarker.setLatLng([p.latitude, p.longitude]);
-  else {
-    positionMarker = L.circleMarker([p.latitude, p.longitude], {
-      radius: 6,
-      color: "white",
-      weight: 2,
-      fillColor: "#527de0",
-      fillOpacity: 1,
-    }).addTo(map);
-  }
-  if (state.route.length === 1) map.setView([p.latitude, p.longitude], 17);
-  message(
-    `Записываем прогулку · GPS ±${
-      Math.round(p.accuracy)
-    } м. Вернитесь к старту в пределах ${state.config.closureMeters ?? 15} м.`,
-  );
-  render();
-}
-async function startWalk() {
-  if (state.busy || state.walk || state.live) return;
-  if (!state.pet) {
-    editProfile();
-    return;
-  }
-  state.starting = true;
-  busy(true);
-  const generation = ++state.generation;
-  try {
-    const position = await currentPosition();
-    if (generation !== state.generation) return;
-    const fix = positionSample(position);
-    if (
-      !goodFix(fix, maxAccuracy()) || Date.now() / 1000 - fix.timestamp > 15
-    ) {
-      throw new Error(
-        `Старт требует свежий GPS с погрешностью ≤${maxAccuracy()} м. Сейчас: ${
-          Number.isFinite(fix.accuracy)
-            ? "±" + Math.round(fix.accuracy) + " м"
-            : "точность неизвестна"
-        }. Выйдите на открытое место.`,
-      );
-    }
-    const walk = await api("/api/walks", { method: "POST" });
-    if (generation !== state.generation) {
-      api(`/api/walks/${walk.id}`, { method: "DELETE" }).catch(() => {});
-      return;
-    }
-    state.walk = walk;
-    state.route = [];
-    state.latest = null;
-    if (position.timestamp / 1000 >= walk.startedAt - 5) {
-      onPosition(position, generation);
-    }
-    telegram?.enableClosingConfirmation?.();
-    void keepAwake();
-    const cleanup = await locationSource.watchPosition(
-      (p) => onPosition(p, generation),
-      () => {
-        if (generation !== state.generation) return;
-        state.latest = null;
-        message(
-          "GPS временно недоступен. Если перерыв превысит 45 секунд, запись будет отменена.",
-        );
-        render();
-      },
-    );
-    if (generation !== state.generation) cleanup();
-    else state.watcher = cleanup;
-  } catch (error) {
-    if (generation === state.generation) {
-      stopWalk();
-      message(error.message);
-    }
-  } finally {
-    state.starting = false;
-    busy(false);
-  }
 }
 function demoStep() {
   if (!state.config.demoMode || !state.pet || state.busy) return;
@@ -743,33 +603,18 @@ function demoStep() {
   state.latest = p;
   message(
     state.route.length === state.config.demoRoute.length
-      ? "Демоконтур замкнут. Нажмите «Захватить территорию»."
+      ? "Демоконтур замкнут. Нажмите «Захватить демоучасток»."
       : "Нажимайте «Следующая точка», чтобы обойти демонстрационный участок.",
   );
   drawRoute();
 }
 async function capture() {
-  if (state.busy || !state.walk) return;
+  if (state.busy || !state.walk?.demo || !client.isDemo) return;
   const walk = state.walk;
   busy(true);
   try {
-    let points = state.route;
-    if (!walk.demo) {
-      if (!state.latest || Date.now() / 1000 - state.latest.timestamp > 15) {
-        throw new Error("Дождитесь свежего точного GPS.");
-      }
-      if (state.latest.timestamp > points.at(-1).timestamp) {
-        points = [...points, state.latest];
-      }
-    }
-    const result = await api(walk.demo ? "/api/demo/capture" : "/api/capture", {
-      method: "POST",
-      ...(walk.demo ? {} : {
-        headers: json(),
-        body: JSON.stringify({ walk_id: walk.id, points }),
-      }),
-    });
-    stopWalk({ notify: false });
+    const result = await api("/api/demo/capture", { method: "POST" });
+    stopWalk();
     // Захват уже сохранён. Ошибка обновления карты не должна выглядеть как отказ захвата.
     message(
       `Территория ваша! Захвачено ${
@@ -790,7 +635,7 @@ async function capture() {
     }
   } catch (error) {
     if (error.annulled) {
-      stopWalk({ notify: false });
+      stopWalk();
       telegram?.HapticFeedback?.notificationOccurred("error");
     }
     message(error.message);
@@ -799,28 +644,6 @@ async function capture() {
   }
 }
 
-setInterval(() => {
-  if (!state.walk || state.walk.demo || state.busy) return;
-  const last = state.route.at(-1)?.timestamp ?? state.walk.startedAt;
-  if (Date.now() / 1000 - last > 45) {
-    stopWalk();
-    message(
-      "Прогулка отменена: точный GPS отсутствовал больше 45 секунд. Начните новую запись.",
-    );
-  } else render();
-}, 1000);
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden && (state.walk || state.starting)) {
-    stopWalk();
-    message(
-      "Запись прервана: мини-приложение ушло в фон. Начните новую прогулку.",
-    );
-  }
-});
-window.addEventListener("pagehide", () => {
-  if (state.walk) stopWalk();
-});
-$("start-button").addEventListener("click", startWalk);
 $("capture-button").addEventListener("click", capture);
 $("demo-button").addEventListener("click", demoStep);
 $("cancel-button").addEventListener("click", () => {
@@ -864,7 +687,7 @@ function chosenPaint() {
 function updatePreview() {
   const pet = chosenPaint(),
     svg = $("paint-preview"),
-    path = svg.querySelector("path");
+    path = svg.querySelector(":scope > path");
   svg.querySelector("defs")?.remove();
   path.setAttribute("fill", pet.color);
   path.setAttribute("fill-opacity", pet.opacity);
@@ -879,7 +702,15 @@ async function refreshWallet() {
   try {
     const w = await api("/api/wallet");
     setBonesText($("wallet-balance"), w.balance, "", " 🦴");
-    setBonesText($("wallet-rate"), Math.round(Number(w.rate)), "", " 🦴/час");
+    if (w.incomePeriodSeconds === 86400) {
+      $("wallet-rate").textContent = `${formatDailyRate(w.rate)} 🦴/сутки`;
+      $("wallet-rate").title = "Доход за полные сутки при текущей площади";
+      $("wallet-payout").textContent = payoutText(w);
+    } else {
+      $("wallet-rate").textContent =
+        "Для суточного дохода обновите сервер до v.0.9";
+      $("wallet-payout").textContent = "";
+    }
   } catch {
     $("wallet-rate").textContent =
       "Доход недоступен: требуется обновление сервера";
@@ -888,105 +719,7 @@ async function refreshWallet() {
 setInterval(() => {
   if (!document.hidden) void refreshWallet();
 }, 30000);
-let chatLoading = false, chatSending = false;
-async function refreshChat() {
-  if (
-    chatLoading || !$("chat-dialog").open || document.hidden ||
-    (!client.isDemo && !state.config?.features?.chat)
-  ) return;
-  chatLoading = true;
-  try {
-    const data = await api("/api/chat"),
-      box = $("chat-messages"),
-      atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-    const fragment = document.createDocumentFragment();
-    for (const item of data.messages) {
-      const row = document.createElement("article"),
-        head = document.createElement("strong"),
-        text = document.createElement("p"),
-        time = document.createElement("time");
-      head.textContent = item.pet?.name ?? "Генерал";
-      text.textContent = item.text;
-      time.textContent = new Date(Number(item.createdAt) * 1000).toLocaleString(
-        "ru-RU",
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-          day: "2-digit",
-          month: "2-digit",
-        },
-      );
-      row.append(head, time, text);
-      fragment.append(row);
-    }
-    if (!data.messages.length) {
-      const p = document.createElement("p");
-      p.textContent = "Пока тихо. Начните разговор с другими Генералами.";
-      fragment.append(p);
-    }
-    box.replaceChildren(fragment);
-    if (atBottom) box.scrollTop = box.scrollHeight;
-  } catch (e) {
-    $("chat-error").textContent = e.message;
-  } finally {
-    chatLoading = false;
-  }
-}
-$("open-chat").addEventListener("click", () => {
-  if (!state.connected) {
-    message("Откройте приложение через бота или включите демо.");
-    return;
-  }
-  if (!state.pet) {
-    editProfile();
-    return;
-  }
-  $("chat-error").textContent = "";
-  $("send-chat").disabled = !client.isDemo && !state.config?.features?.chat;
-  if ($("send-chat").disabled) {
-    $("chat-error").textContent =
-      "Общий чат включится после обновления сервиса. Инструкция находится под картой.";
-  }
-  $("chat-dialog").showModal();
-  void refreshChat();
-});
-$("close-chat").addEventListener("click", () => $("chat-dialog").close());
-$("chat-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (chatSending || (!client.isDemo && !state.config?.features?.chat)) return;
-  chatSending = true;
-  $("send-chat").disabled = true;
-  try {
-    await api("/api/chat", {
-      method: "POST",
-      headers: json(),
-      body: JSON.stringify({ text: $("chat-text").value }),
-    });
-    $("chat-error").textContent = "Сообщение передано.";
-    $("chat-text").value = "";
-    if (chatLoading) {
-      await new Promise((resolve) => {
-        const timer = setInterval(() => {
-          if (!chatLoading) {
-            clearInterval(timer);
-            resolve();
-          }
-        }, 50);
-        setTimeout(() => {
-          clearInterval(timer);
-          resolve();
-        }, 10000);
-      });
-    }
-    await refreshChat();
-  } catch (error) {
-    $("chat-error").textContent = error.message;
-  } finally {
-    chatSending = false;
-    $("send-chat").disabled = false;
-  }
-});
-setInterval(() => void refreshChat(), 10000);
+createChat({ api, context: () => state, message });
 
 // Состояние фонового режима хранится на сервере, отдельно от браузерного GPS.
 let liveLoading = false, liveFittedId = null, shownAnnulment = null;
@@ -1041,43 +774,19 @@ async function refreshLive() {
     liveLoading = false;
   }
 }
-$("live-start").addEventListener("click", async () => {
-  if (state.busy || state.walk || state.live) return;
+$("goto-bot").addEventListener("click", async () => {
+  if (state.busy) return;
   if (!state.pet) {
     editProfile();
     return;
   }
   busy(true);
   try {
-    if (state.config.features?.autoLiveStart) {
-      // Telegram не умеет включать Live Location запросом разрешения. Убираем
-      // отдельный старт GPS: бот начнёт запись по самой трансляции.
-      await api("/api/live/instructions", { method: "POST" });
-      message(
-        "В чате бота включите трансляцию: скрепка → Геопозиция → Транслировать. Запись начнётся сама.",
-      );
-      telegram?.close?.();
-      return;
-    }
-    const p = positionSample(await currentPosition());
-    if (!goodFix(p, maxAccuracy()) || Date.now() / 1000 - p.timestamp > 15) {
-      throw new Error(
-        `Нужен свежий GPS с точностью ≤${maxAccuracy()} м. Выйдите на открытое место.`,
-      );
-    }
-    const data = await api("/api/live/start", {
-      method: "POST",
-      headers: json(),
-      body: JSON.stringify({ accuracy: p.accuracy }),
-    });
-    state.live = data.walk;
-    message(
-      "Запись подготовлена. Откройте чат бота и включите трансляцию геопозиции. Это отдельный режим Telegram, не браузерная запись.",
-    );
-    await refreshLive();
+    await api("/api/live/instructions", { method: "POST" });
+    message("В чате бота: 📎 → Геопозиция → Транслировать геопозицию.");
+    telegram?.close?.();
   } catch (e) {
     message(e.message);
-    void refreshLive();
   } finally {
     busy(false);
   }

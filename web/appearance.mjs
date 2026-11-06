@@ -26,7 +26,12 @@ export function colorHue(hex) {
 }
 export function paintPath(layer, pet) {
   const element = layer.getElement?.();
-  if (!element || !["stripes", "grid", "camo"].includes(pet.pattern)) return;
+  if (
+    !element ||
+    !["stripes", "grid", "camo", "digital", "tiger", "flecktarn"].includes(
+      pet.pattern,
+    )
+  ) return;
   const svg = element.ownerSVGElement, ns = "http://www.w3.org/2000/svg";
   let defs = svg.querySelector("defs");
   if (!defs) {
@@ -87,6 +92,112 @@ export function paintPath(layer, pet) {
           "fill-opacity": ".2",
         }),
       );
+    }
+    // Разные структуры, а не перекраска одной фотографии. Цвет остаётся
+    // связан с Hue/насыщенностью, а общая прозрачность задаётся самой областью.
+    if (["digital", "tiger", "flecktarn"].includes(pet.pattern)) {
+      const size = pet.pattern === "digital" ? 64 : 96;
+      pattern.setAttribute("width", size);
+      pattern.setAttribute("height", size);
+      pattern.replaceChildren(
+        make("rect", { width: size, height: size, fill: color }),
+      );
+      if (pet.pattern === "digital") {
+        const pixels = [
+          "00112200",
+          "00113300",
+          "33003311",
+          "23330011",
+          "22110033",
+          "03112233",
+          "00112200",
+          "00112200",
+        ];
+        const shades = {
+          "1": ["#101820", .55],
+          "2": ["#ffffff", .25],
+          "3": ["#101820", .85],
+        };
+        for (let y = 0; y < 8; y++) {
+          for (let x = 0; x < 8; x++) {
+            const shade = shades[pixels[y][x]];
+            if (!shade) continue;
+            pattern.append(
+              make("rect", {
+                x: x * 8,
+                y: y * 8,
+                width: 8,
+                height: 8,
+                fill: shade[0],
+                "fill-opacity": shade[1],
+              }),
+            );
+          }
+        }
+      }
+      if (pet.pattern === "tiger") {
+        for (const [y, flip] of [[9, 1], [36, -1], [67, 1]]) {
+          const group = make("g", { transform: `translate(0 ${y})` });
+          group.append(
+            make("path", {
+              d: "M-5 3C14-7 23 8 42 2S72-8 101 3L101 12C82 9 76 19 57 13S26 16-5 12Z",
+              fill: "#101820",
+              "fill-opacity": .8,
+            }),
+          );
+          group.append(
+            make("path", {
+              d: flip > 0
+                ? "M7 20Q25 8 48 22L38 26Q20 18 7 24Z"
+                : "M52 22Q76 9 93 19L95 25Q76 17 52 27Z",
+              fill: "#fff",
+              "fill-opacity": .26,
+            }),
+          );
+          pattern.append(group);
+        }
+      }
+      if (pet.pattern === "flecktarn") {
+        // Фиксированный генератор даёт один рисунок в досье и на каждой карте.
+        let seed = 413;
+        const random = () => {
+          seed = (seed * 1664525 + 1013904223) >>> 0;
+          return seed / 4294967296;
+        };
+        for (let cluster = 0; cluster < 24; cluster++) {
+          const x = random() * 96, y = random() * 96, light = cluster % 4 === 0;
+          for (let dot = 0; dot < 3; dot++) {
+            const cx = x + (random() - .5) * 12,
+              cy = y + (random() - .5) * 12,
+              rx = 2 + random() * 4,
+              ry = 2 + random() * 3;
+            // Дублируем крайние пятна через границу плитки без видимого шва.
+            for (const dx of [-96, 0, 96]) {
+              for (const dy of [-96, 0, 96]) {
+                if (
+                  cx + dx + rx > 0 && cx + dx - rx < 96 && cy + dy + ry > 0 &&
+                  cy + dy - ry < 96
+                ) {
+                  pattern.append(
+                    make("ellipse", {
+                      cx: cx + dx,
+                      cy: cy + dy,
+                      rx,
+                      ry,
+                      fill: light ? "#fff" : "#101820",
+                      "fill-opacity": light
+                        ? .28
+                        : cluster % 3 === 0
+                        ? .45
+                        : .8,
+                    }),
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
     }
     defs.append(pattern);
   }

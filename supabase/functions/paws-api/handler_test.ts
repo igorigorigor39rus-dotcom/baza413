@@ -61,6 +61,13 @@ function fixture(
               mergeOwnPurchases: true,
               foreignBuyouts: true,
               notifications: true,
+              geoChat: true,
+              liveOnly: true,
+              captureHelp: true,
+              extraCamouflage: true,
+              dailyIncome: true,
+              incomePeriodSeconds: 86400,
+              sqmPerBone: 10,
               starShop: true,
               reminders: true,
               largestTerritory: true,
@@ -205,32 +212,16 @@ Deno.test("карта: bbox и публичные URL аватаров", async (
       .status === 422,
   );
 });
-Deno.test("маршрут: плохая точность отклоняется до базы, валидный передаётся RPC", async () => {
-  const { handler, calls } = fixture(() =>
-    Response.json({ id: "captured", area: 100 })
-  );
-  const walk = "00000000-0000-0000-0000-000000000000";
-  const points = [0, 1, 2, 3].map((i) => ({
-    latitude: 54,
-    longitude: 20,
-    accuracy: 3,
-    timestamp: NOW - 3 + i,
-  }));
-  assert(
-    (await handler(
-      await request("/api/capture", "POST", {
-        walk_id: walk,
-        points: [...points.slice(0, 3), { ...points[3], accuracy: 20.001 }],
-      }),
-    )).status === 422,
-  );
-  assert(calls.length === 0);
-  assert(
-    (await handler(
-      await request("/api/capture", "POST", { walk_id: walk, points }),
-    )).status === 200,
-  );
-  assert(calls[0].url.endsWith("/rpc/paws_capture"));
+Deno.test("v09: браузерный старт и GPS-захват отключены до RPC", async () => {
+  const f = fixture();
+  for (const path of ["/api/walks", "/api/capture"]) {
+    const response = await f.handler(
+      await request(path, "POST", { points: [] }),
+    );
+    assert(response.status === 410);
+    assert((await response.json()).detail.includes("трансляци"));
+  }
+  assert(f.calls.length === 0);
 });
 Deno.test("ошибки SQL не раскрывают внутренности и секреты", async () => {
   const { handler } = fixture(() =>
@@ -400,7 +391,9 @@ Deno.test("досье: новые поля передаются в отдель�
 });
 Deno.test("чат и баланс всегда используют проверенного владельца", async () => {
   const { handler, calls } = fixture((url) =>
-    Response.json(url.endsWith("/paws_chat") ? { messages: [] } : { ok: true })
+    Response.json(
+      url.endsWith("/paws_chat_room") ? { messages: [] } : { ok: true },
+    )
   );
   assert((await handler(await request("/api/wallet"))).status === 200);
   assert(
@@ -426,7 +419,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.8.0" && config.features.chat === false &&
+    config.version === "0.9.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -859,23 +852,13 @@ Deno.test("v071: успешная доставка помечается, чуж�
   );
 });
 
-Deno.test("v071: GPS-захват вызывает только capture без репараций и рассылки", async () => {
+Deno.test("v09: захват трансляции не вызывает репарации или рассылку", async () => {
   const f = fixture(() => Response.json({ id: "captured", area: 100 }));
-  const points = [0, 1, 2, 3].map((i) => ({
-    latitude: 54,
-    longitude: 20,
-    accuracy: 20,
-    timestamp: NOW - 3 + i,
-  }));
   assert(
-    (await f.handler(
-      await request("/api/capture", "POST", {
-        walk_id: "00000000-0000-0000-0000-000000000001",
-        points,
-      }),
-    )).status === 200,
+    (await f.handler(await request("/api/live/capture", "POST"))).status ===
+      200,
   );
-  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_capture"));
+  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_live_capture"));
 });
 
 const SPEED_WARNING = "Ай яй яй, захват аннулирован, играй честно";
@@ -886,33 +869,15 @@ const speedRefusal = {
   detail: SPEED_WARNING,
   averageSpeedKmh: 40,
 };
-Deno.test("v08: оба API захвата возвращают окончательный отказ 422 после RPC", async () => {
+Deno.test("v09: захват трансляции возвращает окончательный отказ после RPC", async () => {
   const f = fixture(() => Response.json(speedRefusal));
-  const points = [0, 1, 2, 3].map((i) => ({
-    latitude: 54,
-    longitude: 20,
-    accuracy: 20,
-    timestamp: NOW - 3 + i,
-  }));
-  for (
-    const [path, body] of [["/api/capture", {
-      walk_id: speedRefusal.walkId,
-      points,
-    }], ["/api/live/capture", undefined]] as const
-  ) {
-    const response = await f.handler(await request(path, "POST", body));
-    const data = await response.json();
-    assert(
-      response.status === 422 && data.annulled && data.code === "SPEED_LIMIT" &&
-        data.detail === SPEED_WARNING,
-    );
-  }
+  const response = await f.handler(await request("/api/live/capture", "POST"));
+  const data = await response.json();
   assert(
-    f.calls.length === 2 &&
-      f.calls.every((c) =>
-        c.url.includes("paws_capture") || c.url.includes("paws_live_capture")
-      ),
+    response.status === 422 && data.annulled && data.code === "SPEED_LIMIT" &&
+      data.detail === SPEED_WARNING,
   );
+  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_live_capture"));
 });
 Deno.test("v08: бот сообщает об аннулировании без NaN и подтверждает webhook", async () => {
   const f = fixture((url) =>
@@ -1015,4 +980,101 @@ Deno.test("v08: presence and largest territory use verified caller and separate 
     )).status === 422,
   );
   assert(f.calls.length === before);
+});
+
+Deno.test("v09: category and caller are validated for both chat methods", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_chat_room")
+        ? { messages: [], canRead: true, canPost: false }
+        : { ok: true },
+    )
+  );
+  assert(
+    (await f.handler(await request("/api/chat?channel=district"))).status ===
+      200,
+  );
+  let payload = JSON.parse(String(f.calls[0].options.body));
+  assert(payload.p_channel === "district" && payload.p_user === 42);
+  assert(
+    (await f.handler(
+      await request("/api/chat", "POST", {
+        text: "Привет",
+        channel: "city",
+        owner_id: 99,
+      }),
+    )).status === 200,
+  );
+  payload = JSON.parse(String(f.calls[1].options.body));
+  assert(
+    payload.p_channel === "city" && payload.p_user === 42 &&
+      f.calls[1].url.endsWith("/paws_send_room"),
+  );
+  const count = f.calls.length;
+  assert(
+    (await f.handler(await request("/api/chat?channel=nearby"))).status === 422,
+  );
+  assert(
+    (await f.handler(
+      await request("/api/chat", "POST", { text: "x", channel: {} }),
+    )).status === 422,
+  );
+  assert(f.calls.length === count);
+});
+
+Deno.test("v09: кнопка Захватить без трансляции даёт короткую инструкцию и ACK", async () => {
+  const help =
+    "Включите трансляцию: 📎 → Геопозиция → Транслировать геопозицию. Затем пройдите маршрут и нажмите «Захватить».";
+  const f = fixture((url) =>
+    url.endsWith("/paws_live_capture")
+      ? Response.json({ code: "P0001", message: help }, { status: 400 })
+      : Response.json({ ok: true, result: {} })
+  );
+  for (
+    const update of [{
+      message: {
+        text: "/capture",
+        from: { id: 42 },
+        chat: { id: 42, type: "private" },
+      },
+    }, {
+      callback_query: {
+        id: "button",
+        data: "walk_capture",
+        from: { id: 42 },
+        message: { chat: { id: 42, type: "private" } },
+      },
+    }]
+  ) {
+    const r = await f.handler(
+      await request("/webhook", "POST", update, {
+        "X-Telegram-Bot-Api-Secret-Token": SECRET,
+      }),
+    );
+    assert(r.status === 200);
+  }
+  const sent = f.calls.filter((c) => c.url.endsWith("/sendMessage"));
+  assert(sent.length === 2);
+  assert(sent.every((c) => JSON.parse(String(c.options.body)).text === help));
+});
+Deno.test("v09: три дополнительных камуфляжа проходят серверную проверку досье", async () => {
+  const f = fixture();
+  for (const pattern of ["digital", "tiger", "flecktarn"]) {
+    const r = await f.handler(
+      await request("/api/me", "PUT", {
+        name: "Рекс",
+        age: 2,
+        description: "",
+        color: "#397c63",
+        hue: 150,
+        saturation: 55,
+        opacity: .35,
+        pattern,
+      }),
+    );
+    assert(r.status === 200);
+    assert(
+      JSON.parse(String(f.calls.at(-1)!.options.body)).p_pattern === pattern,
+    );
+  }
 });
