@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs?v=0.3.0";
+import { meters } from "./tracking.mjs?v=0.4.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -129,19 +129,42 @@ export function createDemoApi(storage, clipping) {
       };
     }
     const data = load(), method = options.method ?? "GET";
-    const settle = () => {
-      const rate = me(data).area;
-      data.wallet ??= { balance: 0, rate, asOf: Date.now() / 1000 };
+    const settleFor = (id) => {
+      data.wallets ??= {};
+      if (data.pet && data.wallet && !data.wallets[data.pet.id]) {
+        data.wallets[data.pet.id] = data.wallet;
+      }
+      const rate = data.territories.filter((t) => t.ownerId === id).reduce(
+        (sum, t) => sum + area(t.geometry),
+        0,
+      );
+      const w = data.wallets[id] ??= {
+        balance: 0,
+        rate,
+        asOf: Date.now() / 1000,
+      };
       const now = Date.now() / 1000;
-      data.wallet.balance += data.wallet.rate *
-        Math.max(0, now - data.wallet.asOf) / 3600;
-      data.wallet.asOf = now;
-      data.wallet.rate = rate;
+      w.balance += w.rate * Math.max(0, now - w.asOf) / 3600;
+      w.asOf = now;
+      w.rate = rate;
+      return w;
     };
     if (path === "/api/wallet") {
-      settle();
+      const w = settleFor(data.pet?.id ?? "demo-me");
       save(data);
-      return { balance: data.wallet.balance, rate: data.wallet.rate };
+      return w;
+    }
+    if (path.startsWith("/api/pets/")) {
+      const id = decodeURIComponent(path.split("/").at(-1)),
+        pet = id === neighbor.id
+          ? neighbor
+          : data.pet?.id === id
+          ? data.pet
+          : null;
+      if (!pet) throw new Error("Досье не найдено.");
+      const wallet = settleFor(id);
+      save(data);
+      return { ...pet, wallet };
     }
     if (path === "/api/chat" && method === "GET") {
       return { messages: data.messages ?? [] };
@@ -182,8 +205,8 @@ export function createDemoApi(storage, clipping) {
     if (path === "/api/me/photo" && method === "POST") {
       if (!data.pet) throw new Error("Сначала сохраните профиль.");
       const file = options.body.get("file");
-      if (!(file instanceof Blob) || file.size > 2 * 1024 * 1024) {
-        throw new Error("Фото должно быть до 2 МБ.");
+      if (!(file instanceof Blob) || file.size > 1_000_000) {
+        throw new Error("Фото должно быть до 1 МБ.");
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
       let binary = "";
@@ -213,7 +236,11 @@ export function createDemoApi(storage, clipping) {
           "Не загрузилась библиотека демо. Перезагрузите страницу.",
         );
       }
-      settle();
+      const owners = new Set([
+        data.pet.id,
+        ...data.territories.map((t) => t.ownerId),
+      ]);
+      for (const id of owners) settleFor(id);
       const coordinates = [[DEMO_ROUTE]];
       const remaining = data.territories.flatMap((t) => {
         const rest = clipping.difference(t.geometry.coordinates, coordinates);
@@ -227,7 +254,10 @@ export function createDemoApi(storage, clipping) {
         geometry: { type: "MultiPolygon", coordinates },
       };
       data.territories = [...remaining, t];
-      data.wallet.rate = me(data).area;
+      for (const id of owners) {
+        data.wallets[id].rate = data.territories.filter((t) => t.ownerId === id)
+          .reduce((sum, t) => sum + area(t.geometry), 0);
+      }
       save(data);
       return { id: t.id, area: area(t.geometry) };
     }

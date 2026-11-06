@@ -17,7 +17,7 @@ def build():
         raise ValueError('Некорректный VERSION')
     for path in [target/'index.html',*target.glob('*.mjs'),*target.glob('*.js')]:
         text=path.read_text()
-        text=re.sub(r'''(["'])(\./[^"'\n?]+\.(?:m?js|css))\1''',lambda m:f'{m[1]}{m[2]}?v={version}{m[1]}',text)
+        text=re.sub(r'''(["'])(\./[^"'\n?]+\.(?:m?js|css|svg))\1''',lambda m:f'{m[1]}{m[2]}?v={version}{m[1]}',text)
         path.write_text(text)
     (target / '.nojekyll').touch()
     assert '/static/' not in (target / 'index.html').read_text()

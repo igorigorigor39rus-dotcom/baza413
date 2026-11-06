@@ -37,8 +37,16 @@ def main():
         page.locator('#pet-pattern').select_option('camo')
         assert page.locator('#hue-value').inner_text()=='210°'
         page.locator('#pet-description').fill('<script>alert("xss")</script> Любит гулять')
-        page.locator('#photo-input').set_input_files({'name':'pet.png','mimeType':'image/png','buffer':image.getvalue()})
+        import random,base64,json
+        source=BytesIO();Image.frombytes('RGB',(2048,2048),random.Random(413).randbytes(2048*2048*3)).save(source,'PNG')
+        assert len(source.getvalue())>2*1024*1024
+        page.locator('#photo-input').set_input_files({'name':'camera.png','mimeType':'image/png','buffer':source.getvalue()})
         page.locator('#save-profile').click();page.locator('#profile-dialog').wait_for(state='hidden')
+        stored=page.evaluate("() => JSON.parse(localStorage.getItem('paws:browser-demo:v1')).pet.photo")
+        assert len(base64.b64decode(stored.split(',')[1]))<=1000000
+        assert page.evaluate("() => getComputedStyle(document.querySelector('.app')).backgroundColor")=='rgb(32, 36, 43)'
+        assert page.locator('#map-provider option[value=yandex]').count()==0
+        page.locator('#income-rules').click();assert '1 м²' in page.locator('#rules-dialog').inner_text();page.locator('#close-rules').click()
         page.locator('#demo-button').click()
         for _ in range(4): page.locator('#demo-button').click()
         page.locator('#capture-button').click()
@@ -47,6 +55,8 @@ def main():
         page.locator('.pet-marker[title="Луна"]').click()
         assert '<script>' in page.locator('#owner-description').inner_text()
         assert page.locator('#owner-photo').get_attribute('src').startswith('data:image/jpeg;base64,')
+        page.wait_for_function("() => document.querySelector('#owner-bones').textContent.startsWith('🦴 ') && !document.querySelector('#owner-bones').textContent.includes('Загружаем')")
+        assert 'недоступ' not in page.locator('#owner-bones').inner_text()
         page.locator('#owner-done').click()
         page.locator('#open-chat').click()
         page.locator('#chat-text').fill('<img src=x onerror=alert(1)> Сообщение агента')
@@ -54,7 +64,7 @@ def main():
         page.wait_for_function("() => document.querySelector('#chat-messages').textContent.includes('Сообщение агента')")
         assert page.locator('#chat-messages img').count()==0
         page.locator('#close-chat').click()
-        assert 'косточек/час' in page.locator('#wallet-rate').inner_text()
+        assert '🦴/час' in page.locator('#wallet-rate').inner_text()
         page.reload(wait_until='networkidle')
         assert 'Луна' in page.locator('#walk-title').inner_text()
         assert 'м² ваших' in page.locator('#area-label').inner_text()
@@ -83,9 +93,52 @@ def main():
             route.fulfill(content_type='application/json',body=json.dumps(data),headers={'Access-Control-Allow-Origin':'*'})
         legacy.route('https://*.supabase.co/**',old_api)
         old=legacy.new_page();old.goto(base,wait_until='networkidle');old.locator('#profile-button').click()
-        assert old.locator('#pet-hue').is_disabled()
+        assert old.locator('#pet-hue').is_enabled()
+        assert old.locator('#server-notice').is_visible()
         old.locator('#save-profile').click();old.locator('#profile-dialog').wait_for(state='hidden');assert payloads
         legacy.close()
+        # Полный контракт обновлённого API: стили сохраняются, POST чата
+        # отправляет текст, чужие 🦴 берутся из свежей карточки.
+        modern=browser.new_context(viewport={'width':390,'height':844})
+        modern.route('https://telegram.org/**',lambda r:r.fulfill(content_type='text/javascript',body='window.Telegram={WebApp:{initData:"test-signed",ready(){},expand(){}}};'))
+        modern.route('https://tile.openstreetmap.org/**',lambda r:r.fulfill(content_type='image/png',body=image.getvalue()))
+        modern.route('https://*.tile.opentopomap.org/**',lambda r:r.fulfill(content_type='image/png',body=image.getvalue()))
+        pet={'id':'42','name':'Агент','age':3,'description':'Досье','color':'#397C63','hue':150,'saturation':55,'opacity':.35,'pattern':'solid'}
+        neighbor={'id':'99','name':'Бублик','age':2,'color':'#808080','description':'Досье соседа','wallet':{'balance':9876.75,'rate':100}}
+        chat=[]
+        def new_api(route):
+            import json,time
+            path=route.request.url.split('/paws-api')[-1].split('?')[0]
+            if path=='/api/config':data={'version':'0.4.0','demoMode':False,'features':{'dossier':True,'chat':True,'wallet':True,'publicWallet':True}}
+            elif path=='/api/me':
+                if route.request.method=='PUT':pet.update(route.request.post_data_json)
+                data={'pet':pet,'area':100}
+            elif path=='/api/wallet':data={'balance':42,'rate':100}
+            elif path=='/api/pets/99':data=neighbor
+            elif path=='/api/territories':data={'territories':[{'id':'land','ownerId':'99','geometry':{'type':'Polygon','coordinates':[[[20.452,54.7105],[20.453,54.7105],[20.453,54.711],[20.452,54.711],[20.452,54.7105]]]},'marker':[54.7108,20.4525]}],'pets':{'99':neighbor},'truncated':False}
+            elif path=='/api/chat':
+                if route.request.method=='POST':chat.append({'id':'1','text':route.request.post_data_json['text'],'pet':pet,'createdAt':time.time()})
+                data={'ok':True} if route.request.method=='POST' else {'messages':chat}
+            else:raise AssertionError('Unexpected API '+path)
+            route.fulfill(content_type='application/json',body=json.dumps(data),headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'})
+        modern.route('https://*.supabase.co/**',new_api)
+        active=modern.new_page();active.goto(base,wait_until='networkidle')
+        assert active.locator('#server-notice').is_hidden()
+        active.locator('#profile-button').click()
+        for field in ['pet-hue','pet-saturation','pet-opacity','pet-pattern']:assert active.locator('#'+field).is_enabled()
+        active.locator('#pet-hue').evaluate("el=>{el.value=230;el.dispatchEvent(new Event('input',{bubbles:true}));}")
+        active.locator('#pet-pattern').select_option('grid');active.locator('#save-profile').click();active.locator('#profile-dialog').wait_for(state='hidden')
+        assert pet['hue']==230 and pet['pattern']=='grid'
+        active.locator('.pet-marker[title="Бублик"]').click()
+        active.wait_for_function("() => document.querySelector('#owner-bones').textContent.includes('876')")
+        assert ''.join(active.locator('#owner-bones').inner_text().split())=='🦴9876'
+        active.locator('#owner-done').click();active.locator('#open-chat').click()
+        active.locator('#chat-text').fill('Проверка v.0.4');active.locator('#send-chat').click()
+        active.wait_for_function("() => document.querySelector('#chat-messages').textContent.includes('Проверка v.0.4')")
+        assert chat[0]['text']=='Проверка v.0.4'
+        active.locator('#close-chat').click();active.locator('#map-provider').select_option('relief')
+        active.wait_for_function("() => document.querySelector('.leaflet-control-attribution').textContent.includes('OpenTopoMap')")
+        modern.close()
         browser.close()
         print('Досье/Hue/камуфляж/чат/косточки OK. Pages OK: вложенный путь, демо без Supabase, PNG → JPEG, перезахват, карточка, безопасный текст, reload, mobile/desktop.')
 

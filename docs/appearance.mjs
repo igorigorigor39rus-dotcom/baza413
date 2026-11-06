@@ -85,3 +85,16 @@ export function paintPath(layer, pet) {
   }
   element.setAttribute("fill", `url(#${id})`);
 }
+
+export function colorSaturation(hex) {
+  const rgb = hex.match(/[a-f\d]{2}/gi)?.map((x) => parseInt(x, 16) / 255);
+  if (!rgb || rgb.length !== 3) return 55;
+  const hi = Math.max(...rgb),
+    lo = Math.min(...rgb),
+    l = (hi + lo) / 2,
+    d = hi - lo;
+  return Math.max(
+    20,
+    Math.min(100, Math.round(d ? (d / (1 - Math.abs(2 * l - 1))) * 100 : 20)),
+  );
+}

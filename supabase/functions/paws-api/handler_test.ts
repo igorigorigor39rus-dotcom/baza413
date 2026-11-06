@@ -44,9 +44,17 @@ function fixture(
     fetch: ((url: string | URL | Request, options: RequestInit = {}) => {
       calls.push({ url: String(url), options });
       return Promise.resolve(
-        respond
-          ? respond(String(url), options)
-          : Response.json({ pet: null, area: 0 }),
+        respond ? respond(String(url), options) : Response.json(
+          String(url).endsWith("/paws_capabilities")
+            ? {
+              dossier: true,
+              chat: true,
+              wallet: true,
+              publicWallet: true,
+              photoLimit: 1000000,
+            }
+            : { pet: null, area: 0 },
+        ),
       );
     }) as typeof fetch,
   });
@@ -119,7 +127,7 @@ Deno.test("публичный config, но профиль требует Telegra
   assert(
     (await handler(new Request(`${BASE}/paws-api/api/me`))).status === 401,
   );
-  assert(calls.length === 0);
+  assert(calls.length === 1 && calls[0].url.endsWith("/paws_capabilities"));
 });
 Deno.test("RPC получает только проверенный user ID; ключи не возвращаются", async () => {
   const { handler, calls } = fixture();
@@ -390,4 +398,41 @@ Deno.test("чат и баланс всегда используют провер
       .status === 422,
   );
   assert((await handler(await request("/api/chat?after=bad"))).status === 422);
+});
+
+Deno.test("готовность проверяет БД, а не обещает функции при старой схеме", async () => {
+  const { handler } = fixture(() =>
+    Response.json({ code: "PGRST202" }, { status: 404 })
+  );
+  const r = await handler(new Request(`${BASE}/paws-api/api/config`));
+  const config = await r.json();
+  assert(
+    config.version === "0.4.0" && config.features.chat === false &&
+      config.features.dossier === false,
+  );
+});
+Deno.test("карточка питомца сохраняет публичный баланс, без чужой транзакции", async () => {
+  const { handler, calls } = fixture(() =>
+    Response.json({
+      id: "99",
+      name: "Агент",
+      wallet: { balance: 123.45, rate: 10 },
+    })
+  );
+  const r = await handler(await request("/api/pets/99"));
+  assert((await r.json()).wallet.balance === 123.45);
+  assert(calls.length === 1 && calls[0].url.endsWith("/paws_pet"));
+});
+Deno.test("фото больше 1 МБ отклоняется до Storage", async () => {
+  const { handler, calls } = fixture();
+  const form = new FormData();
+  form.set("file", new Blob([new Uint8Array(1000001)]), "pet.jpg");
+  const r = await handler(
+    new Request(`${BASE}/paws-api/api/me/photo`, {
+      method: "POST",
+      headers: { Authorization: `tma ${await signed()}` },
+      body: form,
+    }),
+  );
+  assert(r.status === 413 && calls.length === 0);
 });

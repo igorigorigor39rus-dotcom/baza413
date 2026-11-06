@@ -1,8 +1,13 @@
 import { goodFix, length, meters, shouldAppend } from "./tracking.mjs";
 import { createLocationSource } from "./location.mjs";
 import { createClient } from "./client.mjs";
-import { colorHue, hueColor, paintPath } from "./appearance.mjs";
-import { YANDEX_MAPS_API_KEY } from "./config.mjs";
+import {
+  colorHue,
+  colorSaturation,
+  hueColor,
+  paintPath,
+} from "./appearance.mjs";
+import { compressPhoto } from "./photo.mjs";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -134,66 +139,29 @@ function initMap() {
     noWrap: true,
   }).addTo(map);
   tiles.on("tileerror", () => ($("map-warning").hidden = false));
-  let yandexLayer = null;
-  let loading = null;
-  $("map-provider").addEventListener("change", async () => {
-    const select = $("map-provider");
-    select.disabled = true;
-    try {
-      if (select.value === "osm") {
-        if (yandexLayer) map.removeLayer(yandexLayer);
-        tiles.addTo(map);
-        return;
-      }
-      if (!YANDEX_MAPS_API_KEY) {
-        throw new Error(
-          "Для Яндекс.Карт добавьте публичный API-ключ в web/config.mjs и пересоберите docs.",
-        );
-      }
-      loading ??= new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = `https://api-maps.yandex.ru/2.1/?apikey=${
-          encodeURIComponent(YANDEX_MAPS_API_KEY)
-        }&lang=ru_RU&csp=true`;
-        const timer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                "Яндекс.Карты не ответили. Проверьте интернет и API-ключ.",
-              ),
-            ),
-          20000,
-        );
-        script.onload = () =>
-          window.ymaps.ready(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-        script.onerror = () => {
-          clearTimeout(timer);
-          reject(new Error("Не удалось загрузить Яндекс.Карты."));
-        };
-        document.head.append(script);
-      }).catch((e) => {
-        loading = null;
-        throw e;
-      });
-      await loading;
-      if (!ymaps.projection.sphericalMercator) {
-        throw new Error("API Яндекс не поддерживает требуемую проекцию.");
-      }
-      yandexLayer ??= L.yandex("map", {
-        mapOptions: { projection: ymaps.projection.sphericalMercator },
-      });
-      yandexLayer.addTo(map);
-      map.removeLayer(tiles);
-    } catch (e) {
-      select.value = "osm";
-      if (yandexLayer) map.removeLayer(yandexLayer);
+  const relief = L.tileLayer("https://a.tile.opentopomap.org/{z}/{x}/{y}.png", {
+    attribution:
+      'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM | Map style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+    maxNativeZoom: 17,
+    maxZoom: 19,
+  });
+  let reliefErrors = 0;
+  relief.on("tileerror", () => {
+    if (++reliefErrors >= 3 && map.hasLayer(relief)) {
+      map.removeLayer(relief);
       tiles.addTo(map);
-      message(e.message);
-    } finally {
-      select.disabled = false;
+      $("map-provider").value = "osm";
+      message("Карта рельефа недоступна, оставлена OpenStreetMap.");
+    }
+  });
+  $("map-provider").addEventListener("change", () => {
+    reliefErrors = 0;
+    if ($("map-provider").value === "relief") {
+      map.removeLayer(tiles);
+      relief.addTo(map);
+    } else {
+      map.removeLayer(relief);
+      tiles.addTo(map);
     }
   });
   territoriesLayer = L.layerGroup().addTo(map);
@@ -263,7 +231,7 @@ async function refreshMe() {
     ? `${Math.round(data.area).toLocaleString("ru-RU")} м² ваших открытий`
     : "Открывайте новые места";
   $("profile-button").replaceChildren(
-    state.pet ? avatar(state.pet) : document.createTextNode("🐾"),
+    state.pet ? avatar(state.pet) : avatar({ name: "Досье" }),
   );
   render();
 }
@@ -280,6 +248,11 @@ async function boot() {
       return;
     }
     state.config = await api("/api/config");
+    $("server-notice").hidden = client.isDemo || client.isPython ||
+      Boolean(
+        state.config.features?.dossier && state.config.features?.chat &&
+          state.config.features?.publicWallet,
+      );
     $("mode-banner").hidden = !state.config.demoMode;
     await refreshMe();
     state.connected = true;
@@ -306,16 +279,16 @@ function editProfile() {
   $("pet-age").value = p?.age ?? "";
   $("pet-description").value = p?.description || "";
   $("pet-hue").value = p?.hue ?? colorHue(p?.color || "#397c63");
-  $("pet-saturation").value = p?.saturation ?? 55;
+  $("pet-saturation").value = p?.saturation ??
+    colorSaturation(p?.color || "#397c63");
   $("pet-opacity").value = p?.opacity ?? .35;
   $("pet-pattern").value = p?.pattern ?? "solid";
+  // Предпросмотр доступен всегда, а сохранение узоров проверяется отдельно.
   for (
     const id of ["pet-hue", "pet-saturation", "pet-opacity", "pet-pattern"]
   ) {
-    $(id).disabled = !client.isDemo && !state.config?.features?.dossier;
-    $(id).title = $(id).disabled
-      ? "Стили включатся после обновления Supabase"
-      : "";
+    $(id).disabled = false;
+    $(id).removeAttribute("title");
   }
   updatePreview();
   $("photo-input").value = "";
@@ -327,15 +300,12 @@ $("profile-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.busy) return;
   const photo = $("photo-input").files[0];
-  if (photo && photo.size > 2 * 1024 * 1024) {
-    $("profile-error").textContent = "Фото должно быть не больше 2 МБ.";
-    return;
-  }
   const data = new FormData(event.target);
   busy(true);
   $("profile-error").textContent = "";
   let saved = false;
   try {
+    const compressed = photo ? await compressPhoto(photo) : null;
     await api("/api/me", {
       method: "PUT",
       headers: json(),
@@ -343,9 +313,10 @@ $("profile-form").addEventListener("submit", async (event) => {
         name: data.get("name"),
         age: Number(data.get("age")),
         description: data.get("description"),
-        color: !client.isDemo && !state.config?.features?.dossier
-          ? (state.pet?.color ?? "#397C63")
-          : hueColor(Number(data.get("hue")), Number(data.get("saturation"))),
+        color: hueColor(
+          Number(data.get("hue")),
+          Number(data.get("saturation")),
+        ),
         ...(!client.isPython &&
             (client.isDemo || state.config?.features?.dossier)
           ? {
@@ -360,14 +331,18 @@ $("profile-form").addEventListener("submit", async (event) => {
     saved = true;
     if (photo) {
       const form = new FormData();
-      form.append("file", await preparePhoto(photo), "pet.jpg");
+      form.append("file", compressed, "pet.jpg");
       await api("/api/me/photo", { method: "POST", body: form });
     }
     await refreshMe();
     await refreshMap();
     void refreshWallet();
     $("profile-dialog").close();
-    message("Профиль сохранён. Можно отправляться за новыми территориями!");
+    message(
+      !client.isDemo && !state.config?.features?.dossier
+        ? "Профиль и цвет сохранены. Для сохранения узора и плотности требуется обновление сервиса."
+        : "Досье и оформление сохранены. Можно отправляться на прогулку.",
+    );
   } catch (error) {
     $("profile-error").textContent = (saved
       ? "Профиль уже сохранён, но не удалось завершить обновление: "
@@ -387,44 +362,30 @@ $("photo-input").addEventListener("change", () => {
     $("photo-preview").src = state.previewUrl;
   }
 });
-async function preparePhoto(file) {
-  // Canvas уменьшает исходник и убирает EXIF. Edge Function повторно декодирует
-  // JPEG: сервер не доверяет ни расширению файла, ни присланному Content-Type.
-  const url = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    if (image.naturalWidth * image.naturalHeight > 20_000_000) {
-      throw new Error("Выберите фото до 20 мегапикселей.");
-    }
-    const scale = Math.min(
-      1,
-      512 / Math.max(image.naturalWidth, image.naturalHeight),
-    );
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const context = canvas.getContext("2d");
-    context.fillStyle = "white";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.85)
-    );
-    if (!blob) throw new Error("Не удалось обработать фотографию.");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-function showOwner(pet) {
+
+let ownerRequest = 0;
+async function showOwner(pet) {
+  const request = ++ownerRequest;
   $("owner-photo").src = pet.photo || PAW;
   $("owner-photo").style.borderColor = pet.color;
   $("owner-name").textContent = `${pet.name} · ${pet.age} лет`;
   $("owner-description").textContent = pet.description ||
     "Любит гулять и открывать новые места.";
+  $("owner-bones").textContent = "🦴 Загружаем…";
   if (!$("owner-dialog").open) $("owner-dialog").showModal();
+  try {
+    const current = await api(`/api/pets/${encodeURIComponent(pet.id)}`);
+    if (request !== ownerRequest || !$("owner-dialog").open) return;
+    $("owner-bones").textContent = current.wallet
+      ? `🦴 ${
+        Math.floor(Number(current.wallet.balance)).toLocaleString("ru-RU")
+      }`
+      : "🦴 Данные пока недоступны";
+  } catch {
+    if (request === ownerRequest) {
+      $("owner-bones").textContent = "🦴 Не удалось обновить";
+    }
+  }
 }
 
 function positionSample(position) {
@@ -692,6 +653,11 @@ $("locate-button").addEventListener("click", async () => {
     message(error.message);
   }
 });
+$("income-rules").addEventListener(
+  "click",
+  () => $("rules-dialog").showModal(),
+);
+$("close-rules").addEventListener("click", () => $("rules-dialog").close());
 void boot();
 
 // Предпросмотр и единая маркировка всех участков владельца.
@@ -726,7 +692,7 @@ async function refreshWallet() {
     } 🦴`;
     $("wallet-rate").textContent = `${
       Math.round(Number(w.rate)).toLocaleString("ru-RU")
-    } косточек/час`;
+    } 🦴/час`;
   } catch {
     $("wallet-rate").textContent =
       "Доход недоступен: требуется обновление сервера";
@@ -737,7 +703,10 @@ setInterval(() => {
 }, 30000);
 let chatLoading = false, chatSending = false;
 async function refreshChat() {
-  if (chatLoading || !$("chat-dialog").open || document.hidden) return;
+  if (
+    chatLoading || !$("chat-dialog").open || document.hidden ||
+    (!client.isDemo && !state.config?.features?.chat)
+  ) return;
   chatLoading = true;
   try {
     const data = await api("/api/chat"),
@@ -770,7 +739,6 @@ async function refreshChat() {
     }
     box.replaceChildren(fragment);
     if (atBottom) box.scrollTop = box.scrollHeight;
-    $("chat-error").textContent = "";
   } catch (e) {
     $("chat-error").textContent = e.message;
   } finally {
@@ -786,13 +754,19 @@ $("open-chat").addEventListener("click", () => {
     editProfile();
     return;
   }
+  $("chat-error").textContent = "";
+  $("send-chat").disabled = !client.isDemo && !state.config?.features?.chat;
+  if ($("send-chat").disabled) {
+    $("chat-error").textContent =
+      "Общий чат включится после обновления сервиса. Инструкция находится под картой.";
+  }
   $("chat-dialog").showModal();
   void refreshChat();
 });
 $("close-chat").addEventListener("click", () => $("chat-dialog").close());
 $("chat-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (chatSending) return;
+  if (chatSending || (!client.isDemo && !state.config?.features?.chat)) return;
   chatSending = true;
   $("send-chat").disabled = true;
   try {
@@ -801,7 +775,22 @@ $("chat-form").addEventListener("submit", async (e) => {
       headers: json(),
       body: JSON.stringify({ text: $("chat-text").value }),
     });
+    $("chat-error").textContent = "Сообщение передано.";
     $("chat-text").value = "";
+    if (chatLoading) {
+      await new Promise((resolve) => {
+        const timer = setInterval(() => {
+          if (!chatLoading) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, 50);
+        setTimeout(() => {
+          clearInterval(timer);
+          resolve();
+        }, 10000);
+      });
+    }
     await refreshChat();
   } catch (error) {
     $("chat-error").textContent = error.message;

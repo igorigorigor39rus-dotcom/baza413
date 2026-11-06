@@ -35,7 +35,7 @@ async function readBody(req: Request, limit = 3 * 1024 * 1024) {
         await reader.cancel();
         throw new ApiError(
           413,
-          "Запрос слишком большой. Фото должно быть до 2 МБ.",
+          "Запрос слишком большой. Фото после сжатия должно быть до 1 МБ.",
         );
       }
       chunks.push(value);
@@ -193,8 +193,28 @@ export function createHandler(deps: Dependencies) {
       return { ok: true };
     }
     if (path === "/api/config" && req.method === "GET") {
+      let features: Record<string, unknown> = {
+        dossier: false,
+        chat: false,
+        wallet: false,
+        publicWallet: false,
+      };
+      try {
+        features = await rpc("paws_capabilities", {});
+      } catch {
+        try {
+          await rpc("paws_wallet", { p_user: 0 });
+          features = {
+            dossier: true,
+            chat: true,
+            wallet: true,
+            publicWallet: false,
+          };
+        } catch { /* старую БД нельзя объявлять готовой */ }
+      }
       return {
-        features: { dossier: true, chat: true, wallet: true },
+        version: "0.4.0",
+        features,
         demoMode: false,
         closureMeters: 5,
         maxAccuracy: 15,
@@ -205,7 +225,8 @@ export function createHandler(deps: Dependencies) {
     if (path === "/health" && req.method === "GET") {
       await rpc("paws_me", { p_user: 0 });
       await rpc("paws_wallet", { p_user: 0 });
-      return { ok: true };
+      await rpc("paws_capabilities", {});
+      return { ok: true, version: "0.4.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -308,8 +329,8 @@ export function createHandler(deps: Dependencies) {
       } catch {
         throw new ApiError(422, "Некорректный файл фотографии.");
       }
-      if (!(file instanceof File) || file.size > 2 * 1024 * 1024) {
-        throw new ApiError(413, "Фото должно быть до 2 МБ.");
+      if (!(file instanceof File) || file.size > 1_000_000) {
+        throw new ApiError(413, "Фото после сжатия должно быть до 1 МБ.");
       }
       let jpeg: Uint8Array;
       try {
@@ -321,7 +342,24 @@ export function createHandler(deps: Dependencies) {
         if (image.width > 1024 || image.height > 1024) {
           throw new Error("dimensions");
         }
-        jpeg = new Uint8Array(encode(image, 85).data);
+        // Повторное кодирование очищает EXIF; 512px достаточно для аватара.
+        const scale = Math.min(1, 512 / Math.max(image.width, image.height));
+        const width = Math.max(1, Math.round(image.width * scale)),
+          height = Math.max(1, Math.round(image.height * scale));
+        const pixels = new Uint8Array(width * height * 4);
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const from =
+              (Math.min(image.height - 1, Math.floor(y / scale)) * image.width +
+                Math.min(image.width - 1, Math.floor(x / scale))) * 4;
+            pixels.set(
+              image.data.subarray(from, from + 4),
+              (y * width + x) * 4,
+            );
+          }
+        }
+        jpeg = new Uint8Array(encode({ width, height, data: pixels }, 85).data);
+        if (jpeg.length > 1_000_000) throw new Error("size");
       } catch {
         throw new ApiError(
           422,
