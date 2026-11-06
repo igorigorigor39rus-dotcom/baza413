@@ -4,17 +4,19 @@ import {
   meters,
   photoSize,
   shouldAppend,
-} from "./tracking.mjs?v=0.6.0";
-import { createLocationSource } from "./location.mjs?v=0.6.0";
-import { createPurchasing } from "./purchasing.mjs?v=0.6.0";
-import { createClient } from "./client.mjs?v=0.6.0";
+} from "./tracking.mjs?v=0.7.0";
+import { createLocationSource } from "./location.mjs?v=0.7.0";
+import { createPurchasing } from "./purchasing.mjs?v=0.7.0";
+import { createMapFullscreen } from "./fullscreen.mjs?v=0.7.0";
+import { setBonesText } from "./numbers.mjs?v=0.7.0";
+import { createClient } from "./client.mjs?v=0.7.0";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=0.6.0";
-import { compressPhoto } from "./photo.mjs?v=0.6.0";
+} from "./appearance.mjs?v=0.7.0";
+import { compressPhoto } from "./photo.mjs?v=0.7.0";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -28,7 +30,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=0.6.0", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=0.7.0", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -63,6 +65,7 @@ let map,
   positionMarker,
   liveRouteLayer;
 let purchasing;
+let fullscreen;
 const photoMarkers = [];
 function photoIcon(pet) {
   const size = photoSize(map.getZoom()), image = avatar(pet);
@@ -166,6 +169,7 @@ function render() {
     ? `±${Math.round(state.latest.accuracy)} м`
     : "—";
   purchasing?.refresh();
+  fullscreen?.refresh();
 }
 
 function initMap() {
@@ -249,6 +253,7 @@ function initMap() {
     },
     message,
   });
+  fullscreen = createMapFullscreen({ map, telegram, context: () => state });
 }
 async function refreshMap() {
   const id = ++state.refreshId;
@@ -457,11 +462,9 @@ async function showOwner(pet) {
   try {
     const current = await api(`/api/pets/${encodeURIComponent(pet.id)}`);
     if (request !== ownerRequest || !$("owner-dialog").open) return;
-    $("owner-bones").textContent = current.wallet
-      ? `🦴 ${
-        Math.floor(Number(current.wallet.balance)).toLocaleString("ru-RU")
-      }`
-      : "🦴 Данные пока недоступны";
+    if (current.wallet) {
+      setBonesText($("owner-bones"), current.wallet.balance, "🦴 ");
+    } else $("owner-bones").textContent = "🦴 Данные пока недоступны";
   } catch {
     if (request === ownerRequest) {
       $("owner-bones").textContent = "🦴 Не удалось обновить";
@@ -777,12 +780,8 @@ async function refreshWallet() {
   if (!state.connected || !state.pet || client.isPython) return;
   try {
     const w = await api("/api/wallet");
-    $("wallet-balance").textContent = `${
-      Math.floor(Number(w.balance)).toLocaleString("ru-RU")
-    } 🦴`;
-    $("wallet-rate").textContent = `${
-      Math.round(Number(w.rate)).toLocaleString("ru-RU")
-    } 🦴/час`;
+    setBonesText($("wallet-balance"), w.balance, "", " 🦴");
+    setBonesText($("wallet-rate"), Math.round(Number(w.rate)), "", " 🦴/час");
   } catch {
     $("wallet-rate").textContent =
       "Доход недоступен: требуется обновление сервера";
@@ -1066,11 +1065,11 @@ async function loadTop(sort = "bones") {
       agent.className = "ranking-agent";
       agent.append(photo, button);
       name.append(agent);
-      score.textContent = sort === "area"
-        ? Number(entry.area).toLocaleString("ru-RU", {
+      if (sort === "area") {
+        score.textContent = Number(entry.area).toLocaleString("ru-RU", {
           maximumFractionDigits: 2,
-        })
-        : Math.floor(Number(entry.wallet.balance)).toLocaleString("ru-RU");
+        });
+      } else setBonesText(score, entry.wallet.balance);
       row.append(place, name, score);
       $("top-body").append(row);
     }

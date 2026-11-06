@@ -78,6 +78,22 @@ test("демо: покупка свободного участка, цена 10,
   const before=JSON.parse(s.getItem(key)).wallets['demo-me'].balance;
   assert.deepEqual(await api('/api/purchases',{method:'POST',body}),receipt);
   assert.equal(JSON.parse(s.getItem(key)).wallets['demo-me'].balance,before);
-  await assert.rejects(api('/api/purchases/quote',{method:'POST',body:JSON.stringify({vertices})}),/свободную/);
+  await assert.rejects(api('/api/purchases/quote',{method:'POST',body:JSON.stringify({vertices})}),/уже принадлежит/);
   const top=await api('/api/top?sort=area');assert.equal(top.agents[0].pet.id,'demo-me');assert.ok(top.agents[0].area>receipt.area);
+});
+
+test('демо: расширение своего участка оплачивает только новую часть',async()=>{
+  const s=storage(),api=createDemoApi(s,clipping);
+  await api('/api/me',{method:'PUT',body:JSON.stringify({name:'Генерал',age:2,color:'#397C63'})});
+  await api('/api/demo/capture',{method:'POST'});
+  const key='paws:browser-demo:v1',data=JSON.parse(s.getItem(key));data.wallets['demo-me'].balance=1000000;s.setItem(key,JSON.stringify(data));
+  const vertices=[{longitude:20.46,latitude:54.71},{longitude:20.4602,latitude:54.71},{longitude:20.4602,latitude:54.7102},{longitude:20.46,latitude:54.7102}];
+  let quote=await api('/api/purchases/quote',{method:'POST',body:JSON.stringify({vertices})});
+  await api('/api/purchases',{method:'POST',body:JSON.stringify({vertices,maxCost:quote.cost,requestId:crypto.randomUUID()})});
+  const before=(await api('/api/territories')).territories.length;
+  const extended=vertices.map(p=>({...p,longitude:p.longitude+.0001}));
+  quote=await api('/api/purchases/quote',{method:'POST',body:JSON.stringify({vertices:extended})});
+  assert.equal(quote.merged,true);assert.ok(quote.area<quote.selectedArea*.51);
+  await api('/api/purchases',{method:'POST',body:JSON.stringify({vertices:extended,maxCost:quote.cost,requestId:crypto.randomUUID()})});
+  assert.equal((await api('/api/territories')).territories.length,before);
 });

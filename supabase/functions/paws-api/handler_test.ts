@@ -57,6 +57,8 @@ function fixture(
               crossingRoutes: true,
               purchases: true,
               territoryLeaderboard: true,
+              unlimitedPurchases: true,
+              mergeOwnPurchases: true,
               maxAccuracy: 20,
               closureMeters: 20,
               photoLimit: 1000000,
@@ -415,7 +417,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.6.0" && config.features.chat === false &&
+    config.version === "0.7.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -738,4 +740,20 @@ Deno.test("v06: рейтинг площади выбирает отдельны�
     (await f.handler(await request("/api/top?sort=invalid"))).status === 422 &&
       f.calls.length === count,
   );
+});
+
+Deno.test("v07: покупка дороже прежнего потолка передаёт полную сумму в RPC", async () => {
+  const f = fixture(() => Response.json({ id: "purchase", cost: 250000000 }));
+  const r = await f.handler(
+    await request("/api/purchases", "POST", {
+      requestId: "00000000-0000-0000-0000-000000000001",
+      maxCost: 250000000,
+      vertices: [{ longitude: 20, latitude: 54 }, {
+        longitude: 21,
+        latitude: 54,
+      }, { longitude: 20, latitude: 55 }],
+    }),
+  );
+  assert(r.status === 200);
+  assert(JSON.parse(String(f.calls[0].options.body)).p_max_cost === 250000000);
 });

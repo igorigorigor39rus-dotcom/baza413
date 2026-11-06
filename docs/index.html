@@ -13,14 +13,14 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.tile.opentopomap.org data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://fywsqxijebneqkxusgro.supabase.co; font-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; object-src 'none'"
     />
-    <link rel="icon" href="./assets/paw.svg?v=0.6.0" type="image/svg+xml" />
-    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.6.0" />
-    <link rel="stylesheet" href="./style.css?v=0.6.0" />
+    <link rel="icon" href="./assets/paw.svg?v=0.7.0" type="image/svg+xml" />
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.7.0" />
+    <link rel="stylesheet" href="./style.css?v=0.7.0" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-    <script src="./vendor/leaflet/leaflet.js?v=0.6.0" defer></script>
-    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.6.0" defer></script>
+    <script src="./vendor/leaflet/leaflet.js?v=0.7.0" defer></script>
+    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.7.0" defer></script>
 
-    <script src="./app.js?v=0.6.0" type="module"></script>
+    <script src="./app.js?v=0.7.0" type="module"></script>
   </head>
   <body>
     <main class="app">
@@ -35,7 +35,7 @@
           aria-label="Мой питомец"
           disabled
         >
-          <img src="./assets/paw.svg?v=0.6.0" alt="Досье питомца">
+          <img src="./assets/paw.svg?v=0.7.0" alt="Досье питомца">
         </button>
       </header>
       <div id="mode-banner" class="mode-banner" hidden>
@@ -63,13 +63,30 @@
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_6.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.6</a>
+        >Инструкция v.0.7</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
+        <button
+          id="map-fullscreen"
+          class="map-fullscreen-button"
+          aria-label="Развернуть карту"
+          aria-pressed="false"
+          title="Развернуть карту"
+        >
+          <span class="expand-icon"><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6" />
+            </svg></span>
+          <span class="collapse-icon" hidden><svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M3 9h6V3m6 0v6h6M3 15h6v6m6 0v-6h6" />
+            </svg></span>
+        </button>
         <div class="map-label">
           <span class="live-dot"></span><span id="area-label"
           >Открывайте новые места</span>
@@ -88,7 +105,7 @@
       </section>
       <section class="purchase-section" aria-label="Покупка территории">
         <button id="purchase-start" class="secondary" disabled>
-          Купить свободную территорию · 🦴
+          Купить территорию · 🦴
         </button>
         <p id="purchase-note" class="hint">1 м² = 10 🦴.</p>
         <div id="purchase-panel" hidden>
@@ -212,7 +229,7 @@
         </p>
         <label class="photo-picker"><img
             id="photo-preview"
-            src="./assets/paw.svg?v=0.6.0"
+            src="./assets/paw.svg?v=0.7.0"
             alt="Фото питомца"
           /><span>Добавить или заменить фото<input
               id="photo-input"
@@ -347,8 +364,8 @@
       </p>
       <p>
         Свободную землю можно купить: 1 м² = 10 🦴. Итоговая стоимость
-        округляется вверх до целой 🦴. Купленная территория приносит доход
-        и может быть перезахвачена прогулкой по общим правилам.
+        округляется вверх до целой 🦴. Купленная территория приносит доход и
+        может быть перезахвачена прогулкой по общим правилам.
       </p>
     </dialog>
     <dialog id="top-dialog">

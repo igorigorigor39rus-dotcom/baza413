@@ -63,13 +63,30 @@
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_6.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.6</a>
+        >Инструкция v.0.7</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
+        <button
+          id="map-fullscreen"
+          class="map-fullscreen-button"
+          aria-label="Развернуть карту"
+          aria-pressed="false"
+          title="Развернуть карту"
+        >
+          <span class="expand-icon"><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6" />
+            </svg></span>
+          <span class="collapse-icon" hidden><svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M3 9h6V3m6 0v6h6M3 15h6v6m6 0v-6h6" />
+            </svg></span>
+        </button>
         <div class="map-label">
           <span class="live-dot"></span><span id="area-label"
           >Открывайте новые места</span>
@@ -88,7 +105,7 @@
       </section>
       <section class="purchase-section" aria-label="Покупка территории">
         <button id="purchase-start" class="secondary" disabled>
-          Купить свободную территорию · 🦴
+          Купить территорию · 🦴
         </button>
         <p id="purchase-note" class="hint">1 м² = 10 🦴.</p>
         <div id="purchase-panel" hidden>
@@ -347,8 +364,8 @@
       </p>
       <p>
         Свободную землю можно купить: 1 м² = 10 🦴. Итоговая стоимость
-        округляется вверх до целой 🦴. Купленная территория приносит доход
-        и может быть перезахвачена прогулкой по общим правилам.
+        округляется вверх до целой 🦴. Купленная территория приносит доход и
+        может быть перезахвачена прогулкой по общим правилам.
       </p>
     </dialog>
     <dialog id="top-dialog">

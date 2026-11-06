@@ -1,5 +1,6 @@
 // Предварительная сферическая площадь. Окончательную площадь WGS84, стоимость,
 // свободность участка и списание независимо проверяет сервер PostGIS.
+import { formatBones, fullBones, setBonesText } from "./numbers.mjs?v=0.7.0";
 export function estimateArea(points) {
   if (points.length < 3) return 0;
   const rad = Math.PI / 180;
@@ -22,7 +23,12 @@ export function createPurchasing(
     timer,
     requestId = null;
   const format = (n) =>
-    Number(n).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+    Number(n).toLocaleString(
+      "ru-RU",
+      Number(n) > 0 && Number(n) < .01
+        ? { maximumSignificantDigits: 3 }
+        : { maximumFractionDigits: 2 },
+    );
 
   function refresh() {
     const s = context();
@@ -32,12 +38,17 @@ export function createPurchasing(
     $("purchase-start").hidden = enabled;
     $("purchase-panel").hidden = !enabled;
     $("purchase-note").textContent = available
-      ? "Отметьте свободный участок точками на карте. 1 м² = 10 🦴. Итог округляется вверх до целой 🦴."
-      : "Покупка участков станет доступна после обновления сервера до v.0.6.";
+      ? `Отметьте участок точками на карте. 1 м² новой площади = 10 🦴. Итог округляется вверх до целой 🦴. ${
+        s.config.features.unlimitedPurchases &&
+          s.config.features.mergeOwnPurchases
+          ? "Ограничений по площади и радиусу покупки нет. Свои территории можно расширять и объединять."
+          : "Для покупки без ограничения площади и объединения своих участков обновите сервер до v.0.7."
+      }`
+      : "Покупка участков станет доступна после обновления сервера.";
     $("purchase-confirm").disabled = s.busy || !quote?.affordable;
-    $("purchase-confirm").textContent = quote
-      ? `Купить за ${format(quote.cost)} 🦴`
-      : "Купить участок";
+    if (quote) {
+      setBonesText($("purchase-confirm"), quote.cost, "Купить за ", " 🦴");
+    } else $("purchase-confirm").textContent = "Купить участок";
     $("purchase-undo").disabled = s.busy || !vertices.length;
     $("purchase-clear").disabled = s.busy || !vertices.length;
     $("purchase-cancel").disabled = s.busy;
@@ -112,13 +123,20 @@ export function createPurchasing(
         });
         if (current !== revision || !enabled) return;
         quote = result;
-        $("purchase-status").textContent = `${format(result.area)} м² · ${
-          format(result.cost)
-        } 🦴. ${
+        $("purchase-status").textContent = `Добавится ${
+          format(result.area)
+        } м² · ${formatBones(result.cost)} 🦴. ${
           result.affordable
-            ? "Участок свободен."
-            : `Недостаточно 🦴. Ваш баланс: ${format(result.balance)}.`
+            ? result.merged
+              ? `Свой участок объединится с покупкой. Общая площадь: ${
+                format(result.totalArea)
+              } м².`
+              : "Участок свободен."
+            : `Недостаточно 🦴. Ваш баланс: ${formatBones(result.balance)}.`
         }`;
+        $("purchase-status").title = `Стоимость: ${
+          fullBones(result.cost)
+        } 🦴. Баланс: ${fullBones(result.balance)} 🦴.`;
         refresh();
       } catch (e) {
         if (current === revision && enabled) {
@@ -158,7 +176,13 @@ export function createPurchasing(
   $("purchase-confirm").addEventListener("click", async () => {
     if (
       context().busy || !quote?.affordable ||
-      !confirm(`Купить ${format(quote.area)} м² за ${format(quote.cost)} 🦴?`)
+      !confirm(
+        `Добавить ${format(quote.area)} м² за ${fullBones(quote.cost)} 🦴?${
+          quote.merged
+            ? " Свои территории будут объединены; уже принадлежащая вам площадь не оплачивается повторно."
+            : ""
+        }`,
+      )
     ) return;
     const s = context();
     s.busy = true;
@@ -172,7 +196,9 @@ export function createPurchasing(
       });
       mode(false);
       message(
-        `Куплено ${format(receipt.area)} м² за ${format(receipt.cost)} 🦴.`,
+        `Добавлено ${format(receipt.area)} м² за ${
+          formatBones(receipt.cost)
+        } 🦴.${receipt.merged ? " Свои территории объединены." : ""}`,
       );
       try {
         await onPurchased();

@@ -395,7 +395,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.6.0",
+        version: "0.7.0",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -410,11 +410,12 @@ export function createHandler(deps: Dependencies) {
       const capabilities = await rpc("paws_capabilities", {});
       if (
         !capabilities.autoLiveStart || !capabilities.crossingRoutes ||
-        !capabilities.purchases || !capabilities.territoryLeaderboard
+        !capabilities.purchases || !capabilities.territoryLeaderboard ||
+        !capabilities.unlimitedPurchases || !capabilities.mergeOwnPurchases
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.0.6.");
+        throw new ApiError(503, "Установите полную миграцию v.0.7.");
       }
-      return { ok: true, version: "0.6.0" };
+      return { ok: true, version: "0.7.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -462,7 +463,7 @@ export function createHandler(deps: Dependencies) {
         p_user: user,
         p_request: b.requestId,
         p_vertices: purchaseVertices(b.vertices),
-        p_max_cost: number(b.maxCost, 0, 100000000),
+        p_max_cost: number(b.maxCost, 0, Number.MAX_VALUE),
       });
     }
     if (path === "/api/live/status" && req.method === "GET") {

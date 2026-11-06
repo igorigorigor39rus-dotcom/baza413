@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs?v=0.6.0";
+import { meters } from "./tracking.mjs?v=0.7.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -131,6 +131,8 @@ export function createDemoApi(storage, clipping) {
           purchases: true,
           purchasePrice: 10,
           territoryLeaderboard: true,
+          unlimitedPurchases: true,
+          mergeOwnPurchases: true,
         },
       };
     }
@@ -207,24 +209,66 @@ export function createDemoApi(storage, clipping) {
       ) throw new Error("Отметьте от 3 до 100 точек участка.");
       const ring = b.vertices.map((p) => [p.longitude, p.latitude]);
       ring.push(ring[0]);
-      const polygon = { type: "MultiPolygon", coordinates: [[ring]] },
-        sqm = area(polygon),
-        cost = Math.ceil(sqm * 10);
-      if (sqm < 25 || sqm > 10000000) {
-        throw new Error("Площадь покупки должна быть от 25 м² до 10 км².");
+      const polygon = { type: "MultiPolygon", coordinates: [[ring]] };
+      if (!(area(polygon) > 0)) {
+        throw new Error("Отметьте участок с положительной площадью.");
       }
       if (
         data.territories.some((t) =>
+          t.ownerId !== data.pet.id &&
           area({
-            type: "MultiPolygon",
-            coordinates: clipping.intersection(t.geometry.coordinates, [ring]),
-          }) > .000001
+              type: "MultiPolygon",
+              coordinates: clipping.intersection(t.geometry.coordinates, [
+                ring,
+              ]),
+            }) > 0
         )
-      ) throw new Error("Покупать можно только свободную территорию.");
+      ) throw new Error("Участок пересекает чужую территорию.");
+      const owned = data.territories.filter((t) => t.ownerId === data.pet.id);
+      const free = clipping.difference(
+        polygon.coordinates,
+        ...owned.map((t) => t.geometry.coordinates),
+      );
+      const sqm = area({ type: "MultiPolygon", coordinates: free }),
+        cost = Math.ceil(sqm * 10);
+      if (!(sqm > 0)) {
+        throw new Error(
+          "Выбранная земля уже принадлежит вам. Добавьте свободную площадь.",
+        );
+      }
+      let coordinates = polygon.coordinates;
+      const mergeIds = new Set();
+      let found = true;
+      while (found) {
+        found = false;
+        for (const t of owned) {
+          if (mergeIds.has(t.id)) continue;
+          const union = clipping.union(coordinates, t.geometry.coordinates);
+          const overlap = area({
+            type: "MultiPolygon",
+            coordinates: clipping.intersection(
+              coordinates,
+              t.geometry.coordinates,
+            ),
+          });
+          if (
+            overlap > 0 ||
+            union.length < coordinates.length + t.geometry.coordinates.length
+          ) {
+            mergeIds.add(t.id);
+            coordinates = union;
+            found = true;
+          }
+        }
+      }
+      const combined = { type: "MultiPolygon", coordinates };
       const wallet = settleFor(data.pet.id);
       if (path === "/api/purchases/quote") {
         return {
           area: sqm,
+          selectedArea: area(polygon),
+          totalArea: area(combined),
+          merged: mergeIds.size > 0,
           cost,
           price: 10,
           balance: wallet.balance,
@@ -240,15 +284,19 @@ export function createDemoApi(storage, clipping) {
       const receipt = {
         id: crypto.randomUUID(),
         area: sqm,
+        totalArea: area(combined),
+        merged: mergeIds.size > 0,
         cost,
         requestId: b.requestId,
       };
+      data.territories = data.territories.filter((t) => !mergeIds.has(t.id));
       data.territories.push({
         id: receipt.id,
         ownerId: data.pet.id,
-        geometry: polygon,
+        geometry: combined,
       });
-      wallet.rate += sqm;
+      wallet.rate = data.territories.filter((t) => t.ownerId === data.pet.id)
+        .reduce((sum, t) => sum + area(t.geometry), 0);
       data.purchases ??= {};
       data.purchases[b.requestId] = receipt;
       save(data);

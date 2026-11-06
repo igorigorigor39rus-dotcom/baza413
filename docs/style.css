@@ -1020,3 +1020,73 @@ h1 span {
   font-size: 0.78em;
   letter-spacing: -0.5px;
 }
+.map-fullscreen-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 600;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #647083;
+  border-radius: 12px;
+  background: #303944;
+  color: var(--ink);
+}
+.map-fullscreen-button svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+.map-label {
+  max-width: calc(100% - 84px);
+}
+.map-is-fullscreen {
+  overflow: hidden;
+}
+body.busy #map-fullscreen {
+  pointer-events: auto;
+}
+.map-wrap.map-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  z-index: 1200;
+}
+.map-fullscreen .map-fullscreen-button {
+  top: calc(12px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+}
+.map-fullscreen .map-label {
+  top: calc(12px + env(safe-area-inset-top));
+}
+.map-fullscreen #purchase-panel {
+  position: absolute;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  left: 8px;
+  right: 8px;
+  z-index: 600;
+  max-height: 42dvh;
+  overflow-y: auto;
+  background: #20242bf5;
+  border-radius: 12px;
+}
+.map-fullscreen.with-purchase .leaflet-bottom {
+  bottom: calc(
+    var(--purchase-panel-height, 220px) + 18px + env(safe-area-inset-bottom)
+  );
+}
+.map-fullscreen.with-purchase .locate-button {
+  bottom: calc(
+    var(--purchase-panel-height, 220px) + 28px + env(safe-area-inset-bottom)
+  );
+}
