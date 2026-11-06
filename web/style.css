@@ -515,3 +515,153 @@ body.busy .primary {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* Досье №413: бумага, чернила, штампы. Географическая подложка не перекрашивается. */
+:root {
+  --bg: #f0e7d3;
+  --ink: #302e29;
+  --green: #74523d;
+  --muted: #796f5e;
+  --line: #cfc0a2;
+}
+body {
+  background: #302f2a;
+}
+.app {
+  background:
+    repeating-linear-gradient(0deg, #0000 0 27px, #73623f09 28px),
+    var(--bg);
+}
+h1, h2, .eyebrow, legend, .map-label, .stats, .office-bar {
+  font-family: ui-monospace, Consolas, monospace;
+}
+h1 {
+  letter-spacing: -1.8px;
+}
+h2 {
+  font-size: 20px;
+}
+.eyebrow {
+  color: #8e3930;
+}
+.header {
+  border-bottom: 2px solid #88704a;
+}
+.map-wrap {
+  border-radius: 4px;
+  border: 2px solid #8d7c5a;
+  margin-top: 8px;
+  box-shadow: 3px 4px 0 #7a624c22;
+}
+.primary, .secondary, input, textarea, dialog {
+  border-radius: 5px;
+}
+.primary {
+  background: #554938;
+}
+.secondary {
+  background: #e1d6bc;
+  border: 1px solid #a99570;
+}
+.office-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 24px;
+  gap: 20px;
+}
+.office-bar span, .office-bar small {
+  display: block;
+  font-size: 11px;
+}
+.office-bar strong {
+  display: block;
+  font-size: 24px;
+  margin: 5px 0;
+}
+.office-bar button {
+  width: auto;
+  font-size: 12px;
+  max-width: 160px;
+}
+.map-choice {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin: 0 24px;
+  font-size: 12px;
+}
+.map-choice select {
+  flex: 1;
+}
+select {
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #faf5e7;
+  color: var(--ink);
+  font: inherit;
+  max-width: 100%;
+}
+input[type="range"] {
+  padding: 0;
+  accent-color: #774b37;
+}
+#pet-hue {
+  background: linear-gradient(90deg, red, #ff0, #0f0, #0ff, #00f, #f0f, red);
+  height: 15px;
+  appearance: none;
+  border: 0;
+}
+#pet-hue::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 25px;
+  background: #fff;
+  border: 2px solid #302e29;
+  border-radius: 3px;
+}
+.appearance label {
+  margin-top: 18px;
+}
+#paint-preview {
+  width: 100%;
+  height: 65px;
+  margin-top: 12px;
+  border: 1px dashed #8a7553;
+  background: #f9f5e7;
+}
+.appearance output {
+  float: right;
+}
+#chat-dialog {
+  max-width: 560px;
+}
+#chat-messages {
+  max-height: 45dvh;
+  overflow: auto;
+  border-block: 1px dashed #a09072;
+  min-height: 100px;
+}
+#chat-messages article {
+  padding: 12px 0;
+  border-bottom: 1px solid #cfc0a2;
+}
+#chat-messages time {
+  float: right;
+  font-size: 10px;
+  color: #796f5e;
+}
+#chat-messages p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+.mode-banner {
+  border-bottom: 1px dashed #a09072;
+}
+.owner-card .eyebrow {
+  border: 2px solid #8e3930;
+  padding: 7px;
+  transform: rotate(-2deg);
+}

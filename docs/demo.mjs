@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs";
+import { meters } from "./tracking.mjs?v=0.3.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -129,6 +129,44 @@ export function createDemoApi(storage, clipping) {
       };
     }
     const data = load(), method = options.method ?? "GET";
+    const settle = () => {
+      const rate = me(data).area;
+      data.wallet ??= { balance: 0, rate, asOf: Date.now() / 1000 };
+      const now = Date.now() / 1000;
+      data.wallet.balance += data.wallet.rate *
+        Math.max(0, now - data.wallet.asOf) / 3600;
+      data.wallet.asOf = now;
+      data.wallet.rate = rate;
+    };
+    if (path === "/api/wallet") {
+      settle();
+      save(data);
+      return { balance: data.wallet.balance, rate: data.wallet.rate };
+    }
+    if (path === "/api/chat" && method === "GET") {
+      return { messages: data.messages ?? [] };
+    }
+    if (path === "/api/chat" && method === "POST") {
+      if (!data.pet) throw new Error("Сначала создайте досье.");
+      const text = JSON.parse(options.body).text?.trim();
+      if (!text || text.length > 500) {
+        throw new Error("Сообщение: от 1 до 500 символов.");
+      }
+      data.messages ??= [];
+      const now = Date.now() / 1000;
+      if (data.messages.at(-1)?.createdAt > now - 3) {
+        throw new Error("Подождите 3 секунды.");
+      }
+      data.messages.push({
+        id: String(Date.now()),
+        text,
+        createdAt: now,
+        pet: data.pet,
+      });
+      data.messages = data.messages.slice(-100);
+      save(data);
+      return { ok: true };
+    }
     if (path === "/api/me" && method === "GET") return me(data);
     if (path === "/api/me" && method === "PUT") {
       const b = JSON.parse(options.body);
@@ -175,6 +213,7 @@ export function createDemoApi(storage, clipping) {
           "Не загрузилась библиотека демо. Перезагрузите страницу.",
         );
       }
+      settle();
       const coordinates = [[DEMO_ROUTE]];
       const remaining = data.territories.flatMap((t) => {
         const rest = clipping.difference(t.geometry.coordinates, coordinates);
@@ -188,6 +227,7 @@ export function createDemoApi(storage, clipping) {
         geometry: { type: "MultiPolygon", coordinates },
       };
       data.territories = [...remaining, t];
+      data.wallet.rate = me(data).area;
       save(data);
       return { id: t.id, area: area(t.geometry) };
     }

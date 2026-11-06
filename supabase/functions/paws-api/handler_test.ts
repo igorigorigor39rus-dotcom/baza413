@@ -349,3 +349,45 @@ Deno.test("не JPEG и большой HTTP body отклоняются", async 
     )).status === 413,
   );
 });
+
+Deno.test("досье: новые поля передаются в отдельный RPC и валидируются", async () => {
+  const { handler, calls } = fixture();
+  const body = {
+    name: "Агент",
+    age: 3,
+    description: "Досье",
+    color: "#336699",
+    hue: 210,
+    saturation: 55,
+    opacity: .35,
+    pattern: "camo",
+  };
+  assert((await handler(await request("/api/me", "PUT", body))).status === 200);
+  assert(calls[0].url.endsWith("/rpc/paws_save_dossier"));
+  assert(JSON.parse(String(calls[0].options.body)).p_user === 42);
+  assert(
+    (await handler(
+      await request("/api/me", "PUT", { ...body, pattern: "<script>" }),
+    )).status === 422,
+  );
+});
+Deno.test("чат и баланс всегда используют проверенного владельца", async () => {
+  const { handler, calls } = fixture((url) =>
+    Response.json(url.endsWith("/paws_chat") ? { messages: [] } : { ok: true })
+  );
+  assert((await handler(await request("/api/wallet"))).status === 200);
+  assert(
+    (await handler(
+      await request("/api/chat", "POST", { text: "Привет", owner_id: 99 }),
+    )).status === 200,
+  );
+  assert((await handler(await request("/api/chat?after=1"))).status === 200);
+  for (const c of calls) {
+    assert(JSON.parse(String(c.options.body)).p_user === 42);
+  }
+  assert(
+    (await handler(await request("/api/chat", "POST", { text: " " })))
+      .status === 422,
+  );
+  assert((await handler(await request("/api/chat?after=bad"))).status === 422);
+});

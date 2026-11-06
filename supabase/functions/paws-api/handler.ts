@@ -194,6 +194,7 @@ export function createHandler(deps: Dependencies) {
     }
     if (path === "/api/config" && req.method === "GET") {
       return {
+        features: { dossier: true, chat: true, wallet: true },
         demoMode: false,
         closureMeters: 5,
         maxAccuracy: 15,
@@ -203,6 +204,7 @@ export function createHandler(deps: Dependencies) {
     }
     if (path === "/health" && req.method === "GET") {
       await rpc("paws_me", { p_user: 0 });
+      await rpc("paws_wallet", { p_user: 0 });
       return { ok: true };
     }
     const authorization = req.headers.get("Authorization") ?? "";
@@ -220,7 +222,16 @@ export function createHandler(deps: Dependencies) {
       const b = await jsonBody(req);
       if (
         Object.keys(b).some((k) =>
-          !["name", "age", "description", "color"].includes(k)
+          ![
+            "name",
+            "age",
+            "description",
+            "color",
+            "hue",
+            "saturation",
+            "opacity",
+            "pattern",
+          ].includes(k)
         )
       ) throw new ApiError(422, "Лишнее поле профиля.");
       if (
@@ -229,6 +240,28 @@ export function createHandler(deps: Dependencies) {
         b.description.length > 400 || typeof b.color !== "string" ||
         !/^#[0-9a-f]{6}$/i.test(b.color)
       ) throw new ApiError(422, "Проверьте кличку, описание и цвет питомца.");
+      if (b.hue !== undefined) {
+        const hue = number(b.hue, 0, 359),
+          saturation = number(b.saturation, 20, 100),
+          opacity = number(b.opacity, .15, .8);
+        if (
+          !Number.isInteger(hue) || !Number.isInteger(saturation) ||
+          !["solid", "stripes", "grid", "camo"].includes(String(b.pattern))
+        ) throw new ApiError(422, "Некорректный стиль заливки.");
+        return profile(
+          await rpc("paws_save_dossier", {
+            p_user: user,
+            p_name: b.name.trim(),
+            p_age: number(b.age, 0, 35),
+            p_description: b.description.trim(),
+            p_color: b.color,
+            p_hue: hue,
+            p_saturation: saturation,
+            p_opacity: opacity,
+            p_pattern: b.pattern,
+          }),
+        );
+      }
       return profile(
         await rpc("paws_save_pet", {
           p_user: user,
@@ -238,6 +271,29 @@ export function createHandler(deps: Dependencies) {
           p_color: b.color,
         }),
       );
+    }
+    if (path === "/api/wallet" && req.method === "GET") {
+      return await rpc("paws_wallet", { p_user: user });
+    }
+    if (path === "/api/chat" && req.method === "GET") {
+      const after = url.searchParams.get("after") ?? "0";
+      if (!/^\d{1,18}$/.test(after)) {
+        throw new ApiError(422, "Некорректный курсор чата.");
+      }
+      const result = await rpc("paws_chat", { p_user: user, p_after: after });
+      result.messages = result.messages.map((m: Record<string, unknown>) => ({
+        ...m,
+        pet: pet(m.pet as Pet),
+      }));
+      return result;
+    }
+    if (path === "/api/chat" && req.method === "POST") {
+      const b = await jsonBody(req);
+      if (
+        typeof b.text !== "string" || !b.text.trim() ||
+        b.text.trim().length > 500
+      ) throw new ApiError(422, "Сообщение: от 1 до 500 символов.");
+      return await rpc("paws_send", { p_user: user, p_text: b.text.trim() });
     }
     if (path === "/api/me/photo" && req.method === "POST") {
       const bytes = await readBody(req);

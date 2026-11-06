@@ -1,4 +1,10 @@
-# Лапы на карте: Telegram + GitHub Pages + Supabase
+# Бюро собачьих дел · v0.3
+
+**Обновление работающего приложения:** [инструкция v0.3](guide/UPDATE_V0_3.md). Новая SQL-миграция обязательна для чата, косточек и сохранения стилей.
+
+Карта, Hue и узоры, общий чат, офлайн-доход и детективное оформление. Яндекс.Карты подключаются после добавления вашего браузерного API-ключа.
+
+# Telegram + GitHub Pages + Supabase
 
 **Без VPS и постоянно включённого компьютера.** GitHub Pages размещает карту по HTTPS. Supabase хранит данные и обрабатывает запросы. Бот отвечает через webhook в Supabase, поэтому Python-процесс с polling больше не нужен.
 
@@ -138,7 +144,7 @@ Edge Functions используют TypeScript (похож на JavaScript с т
 
 ## Проверки разработчика и текущие границы проверки
 
-- Deno: `deno task --config supabase/functions/deno.json test` — 13 тестов подписи, CORS, webhook, RPC и JPEG.
+- Deno: `deno task --config supabase/functions/deno.json test` — 15 тестов подписи, CORS, webhook, RPC и JPEG.
 - `node tests/tracking.test.mjs` и `node tests/demo.test.mjs` — 6 тестов GPS-адаптеров и демо.
 - `tests/postgis_checks.py` — 8 проверок настоящей локальной PostGIS: контуры, отверстия, островки, повтор запроса, конкуренция и закрытые права. Это **не ваш Supabase**. Для теста нужен отдельный одноразовый Docker PostGIS с bootstrap из `tests/postgis_bootstrap.sql` и миграцией. Не запускайте bootstrap в облачной базе.
 - `tests/pages_smoke.py` — Chromium: сайт во вложенной папке, профиль, PNG → JPEG, демозахват, карточка и reload. Telegram SDK и тайлы подменяются, Supabase в локальном демо не вызывается.

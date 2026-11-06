@@ -1,6 +1,8 @@
 import { goodFix, length, meters, shouldAppend } from "./tracking.mjs";
 import { createLocationSource } from "./location.mjs";
 import { createClient } from "./client.mjs";
+import { colorHue, hueColor, paintPath } from "./appearance.mjs";
+import { YANDEX_MAPS_API_KEY } from "./config.mjs";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -100,7 +102,7 @@ function render() {
     ? "Идём за новыми открытиями"
     : state.pet
     ? `На прогулку, ${state.pet.name}?`
-    : "Начнём знакомство?";
+    : "Откроем личное дело?";
   $("distance").textContent = `${Math.round(length(state.route))} м`;
   $("gap").textContent = `${
     Math.round(
@@ -132,6 +134,68 @@ function initMap() {
     noWrap: true,
   }).addTo(map);
   tiles.on("tileerror", () => ($("map-warning").hidden = false));
+  let yandexLayer = null;
+  let loading = null;
+  $("map-provider").addEventListener("change", async () => {
+    const select = $("map-provider");
+    select.disabled = true;
+    try {
+      if (select.value === "osm") {
+        if (yandexLayer) map.removeLayer(yandexLayer);
+        tiles.addTo(map);
+        return;
+      }
+      if (!YANDEX_MAPS_API_KEY) {
+        throw new Error(
+          "Для Яндекс.Карт добавьте публичный API-ключ в web/config.mjs и пересоберите docs.",
+        );
+      }
+      loading ??= new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = `https://api-maps.yandex.ru/2.1/?apikey=${
+          encodeURIComponent(YANDEX_MAPS_API_KEY)
+        }&lang=ru_RU&csp=true`;
+        const timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "Яндекс.Карты не ответили. Проверьте интернет и API-ключ.",
+              ),
+            ),
+          20000,
+        );
+        script.onload = () =>
+          window.ymaps.ready(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        script.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error("Не удалось загрузить Яндекс.Карты."));
+        };
+        document.head.append(script);
+      }).catch((e) => {
+        loading = null;
+        throw e;
+      });
+      await loading;
+      if (!ymaps.projection.sphericalMercator) {
+        throw new Error("API Яндекс не поддерживает требуемую проекцию.");
+      }
+      yandexLayer ??= L.yandex("map", {
+        mapOptions: { projection: ymaps.projection.sphericalMercator },
+      });
+      yandexLayer.addTo(map);
+      map.removeLayer(tiles);
+    } catch (e) {
+      select.value = "osm";
+      if (yandexLayer) map.removeLayer(yandexLayer);
+      tiles.addTo(map);
+      message(e.message);
+    } finally {
+      select.disabled = false;
+    }
+  });
   territoriesLayer = L.layerGroup().addTo(map);
   routeLayer = L.polyline([], { color: "#397C63", weight: 4 }).addTo(map);
   let timer;
@@ -162,7 +226,13 @@ async function refreshMap() {
     const pet = data.pets[territory.ownerId];
     if (!pet) continue;
     L.geoJSON(territory.geometry, {
-      style: { color: pet.color, weight: 2, fillOpacity: 0.25 },
+      style: {
+        color: pet.color,
+        weight: 2,
+        fillOpacity: Number(pet.opacity ?? .35),
+      },
+      onEachFeature: (_feature, layer) =>
+        layer.on("add", () => paintPath(layer, pet)),
     })
       .on("click", () => showOwner(pet))
       .addTo(territoriesLayer);
@@ -214,6 +284,7 @@ async function boot() {
     await refreshMe();
     state.connected = true;
     await refreshMap();
+    void refreshWallet();
     message(
       state.config.demoMode
         ? "Это демо на этом устройстве. Попробуйте перезахватить участок Бублика без GPS."
@@ -234,11 +305,19 @@ function editProfile() {
   $("pet-name").value = p?.name || "";
   $("pet-age").value = p?.age ?? "";
   $("pet-description").value = p?.description || "";
-  document
-    .querySelectorAll("[name=color]")
-    .forEach(
-      (input) => (input.checked = input.value === (p?.color || "#397C63")),
-    );
+  $("pet-hue").value = p?.hue ?? colorHue(p?.color || "#397c63");
+  $("pet-saturation").value = p?.saturation ?? 55;
+  $("pet-opacity").value = p?.opacity ?? .35;
+  $("pet-pattern").value = p?.pattern ?? "solid";
+  for (
+    const id of ["pet-hue", "pet-saturation", "pet-opacity", "pet-pattern"]
+  ) {
+    $(id).disabled = !client.isDemo && !state.config?.features?.dossier;
+    $(id).title = $(id).disabled
+      ? "Стили включатся после обновления Supabase"
+      : "";
+  }
+  updatePreview();
   $("photo-input").value = "";
   $("photo-preview").src = p?.photo || PAW;
   $("profile-error").textContent = "";
@@ -264,7 +343,18 @@ $("profile-form").addEventListener("submit", async (event) => {
         name: data.get("name"),
         age: Number(data.get("age")),
         description: data.get("description"),
-        color: data.get("color"),
+        color: !client.isDemo && !state.config?.features?.dossier
+          ? (state.pet?.color ?? "#397C63")
+          : hueColor(Number(data.get("hue")), Number(data.get("saturation"))),
+        ...(!client.isPython &&
+            (client.isDemo || state.config?.features?.dossier)
+          ? {
+            hue: Number(data.get("hue")),
+            saturation: Number(data.get("saturation")),
+            opacity: Number(data.get("opacity")),
+            pattern: data.get("pattern"),
+          }
+          : {}),
       }),
     });
     saved = true;
@@ -275,6 +365,7 @@ $("profile-form").addEventListener("submit", async (event) => {
     }
     await refreshMe();
     await refreshMap();
+    void refreshWallet();
     $("profile-dialog").close();
     message("Профиль сохранён. Можно отправляться за новыми территориями!");
   } catch (error) {
@@ -541,6 +632,7 @@ async function capture() {
     try {
       await refreshMe();
       await refreshMap();
+      void refreshWallet();
     } catch {
       message(
         `Захват ${
@@ -601,3 +693,121 @@ $("locate-button").addEventListener("click", async () => {
   }
 });
 void boot();
+
+// Предпросмотр и единая маркировка всех участков владельца.
+function chosenPaint() {
+  return {
+    hue: Number($("pet-hue").value),
+    saturation: Number($("pet-saturation").value),
+    opacity: Number($("pet-opacity").value),
+    pattern: $("pet-pattern").value,
+    color: hueColor($("pet-hue").value, $("pet-saturation").value),
+  };
+}
+function updatePreview() {
+  const pet = chosenPaint(),
+    svg = $("paint-preview"),
+    path = svg.querySelector("path");
+  svg.querySelector("defs")?.remove();
+  path.setAttribute("fill", pet.color);
+  path.setAttribute("fill-opacity", pet.opacity);
+  paintPath({ getElement: () => path }, pet);
+  $("hue-value").textContent = `${pet.hue}°`;
+}
+for (const id of ["pet-hue", "pet-saturation", "pet-opacity", "pet-pattern"]) {
+  $(id).addEventListener("input", updatePreview);
+}
+async function refreshWallet() {
+  if (!state.connected || !state.pet || client.isPython) return;
+  try {
+    const w = await api("/api/wallet");
+    $("wallet-balance").textContent = `${
+      Math.floor(Number(w.balance)).toLocaleString("ru-RU")
+    } 🦴`;
+    $("wallet-rate").textContent = `${
+      Math.round(Number(w.rate)).toLocaleString("ru-RU")
+    } косточек/час`;
+  } catch {
+    $("wallet-rate").textContent =
+      "Доход недоступен: требуется обновление сервера";
+  }
+}
+setInterval(() => {
+  if (!document.hidden) void refreshWallet();
+}, 30000);
+let chatLoading = false, chatSending = false;
+async function refreshChat() {
+  if (chatLoading || !$("chat-dialog").open || document.hidden) return;
+  chatLoading = true;
+  try {
+    const data = await api("/api/chat"),
+      box = $("chat-messages"),
+      atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    const fragment = document.createDocumentFragment();
+    for (const item of data.messages) {
+      const row = document.createElement("article"),
+        head = document.createElement("strong"),
+        text = document.createElement("p"),
+        time = document.createElement("time");
+      head.textContent = item.pet?.name ?? "Агент";
+      text.textContent = item.text;
+      time.textContent = new Date(Number(item.createdAt) * 1000).toLocaleString(
+        "ru-RU",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+          day: "2-digit",
+          month: "2-digit",
+        },
+      );
+      row.append(head, time, text);
+      fragment.append(row);
+    }
+    if (!data.messages.length) {
+      const p = document.createElement("p");
+      p.textContent = "Пока тихо. Начните разговор с другими агентами.";
+      fragment.append(p);
+    }
+    box.replaceChildren(fragment);
+    if (atBottom) box.scrollTop = box.scrollHeight;
+    $("chat-error").textContent = "";
+  } catch (e) {
+    $("chat-error").textContent = e.message;
+  } finally {
+    chatLoading = false;
+  }
+}
+$("open-chat").addEventListener("click", () => {
+  if (!state.connected) {
+    message("Откройте приложение через бота или включите демо.");
+    return;
+  }
+  if (!state.pet) {
+    editProfile();
+    return;
+  }
+  $("chat-dialog").showModal();
+  void refreshChat();
+});
+$("close-chat").addEventListener("click", () => $("chat-dialog").close());
+$("chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (chatSending) return;
+  chatSending = true;
+  $("send-chat").disabled = true;
+  try {
+    await api("/api/chat", {
+      method: "POST",
+      headers: json(),
+      body: JSON.stringify({ text: $("chat-text").value }),
+    });
+    $("chat-text").value = "";
+    await refreshChat();
+  } catch (error) {
+    $("chat-error").textContent = error.message;
+  } finally {
+    chatSending = false;
+    $("send-chat").disabled = false;
+  }
+});
+setInterval(() => void refreshChat(), 10000);

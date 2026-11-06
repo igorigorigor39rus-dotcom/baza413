@@ -11,22 +11,23 @@
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://fywsqxijebneqkxusgro.supabase.co; base-uri 'self'; form-action 'self'; object-src 'none'"
+      content="default-src 'self'; script-src 'self' https://telegram.org https://yastatic.net https://api-maps.yandex.ru https://*.maps.yandex.net; style-src 'self' 'unsafe-inline'; img-src 'self' https://yastatic.net https://yandex.ru https://yandex.com https://*.yandex.ru https://*.yandex.net https://*.yandex.com data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://yandex.ru https://yandex.com https://*.yandex.ru https://*.yandex.net https://*.yandex.com https://fywsqxijebneqkxusgro.supabase.co; font-src 'self' https://yastatic.net; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; object-src 'none'"
     />
     <link rel="icon" href="./assets/paw.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.3.0" />
+    <link rel="stylesheet" href="./style.css?v=0.3.0" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-    <script src="./vendor/leaflet/leaflet.js" defer></script>
-    <script src="./vendor/polygon-clipping/polygon-clipping.js" defer></script>
-    <script src="./app.js" type="module"></script>
+    <script src="./vendor/leaflet/leaflet.js?v=0.3.0" defer></script>
+    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.3.0" defer></script>
+    <script src="./vendor/leaflet-yandex/Yandex.js?v=0.3.0" defer></script>
+    <script src="./app.js?v=0.3.0" type="module"></script>
   </head>
   <body>
     <main class="app">
       <header class="header">
         <div>
-          <p class="eyebrow">ЛАПЫ НА КАРТЕ</p>
-          <h1>Большой мир.<br />Маленькие лапы.</h1>
+          <p class="eyebrow">ДЕЛО № 413 · СЕКРЕТНО</p>
+          <h1>Бюро<br />собачьих дел.</h1>
         </div>
         <button
           id="profile-button"
@@ -40,6 +41,16 @@
       <div id="mode-banner" class="mode-banner" hidden>
         ДЕМО НА ЭТОМ УСТРОЙСТВЕ · без Telegram
       </div>
+      <div class="office-bar">
+        <div>
+          <span>Резерв косточек</span><strong id="wallet-balance"
+          >—</strong><small id="wallet-rate">Доход: —</small>
+        </div>
+        <button id="open-chat" class="secondary">Оперативная связь</button>
+      </div><label class="map-choice">Карта <select id="map-provider">
+          <option value="osm">OpenStreetMap</option>
+          <option value="yandex">Яндекс</option>
+        </select></label>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
         <div class="map-label">
@@ -97,13 +108,34 @@
       </section>
       <footer>Собираем впечатления, а не километры <span>✦</span></footer>
     </main>
+    <dialog id="chat-dialog">
+      <div class="dialog-heading">
+        <h2>Оперативная связь</h2>
+        <button id="close-chat" class="close-button" aria-label="Закрыть чат">
+          ×
+        </button>
+      </div>
+      <p class="muted">Общий канал агентов. Сообщения видны всем участникам.</p>
+      <div id="chat-messages" role="log" aria-live="polite"></div>
+      <p id="chat-error" class="error" role="status"></p>
+      <form id="chat-form">
+        <label>Сообщение<textarea
+            id="chat-text"
+            maxlength="500"
+            required
+            rows="2"
+          ></textarea></label><button id="send-chat" class="primary">
+          Передать сообщение
+        </button>
+      </form>
+    </dialog>
 
     <dialog id="profile-dialog">
       <form id="profile-form">
         <div class="dialog-heading">
           <div>
-            <p class="eyebrow">ВАШ НАПАРНИК</p>
-            <h2>Профиль питомца</h2>
+            <p class="eyebrow">ЛИЧНОЕ ДЕЛО</p>
+            <h2>Досье агента</h2>
           </div>
           <button
             type="button"
@@ -144,7 +176,7 @@
             required
             placeholder="3"
           /></label>
-        <label>О питомце<textarea
+        <label>Особые приметы<textarea
             name="description"
             id="pet-description"
             maxlength="400"
@@ -152,45 +184,51 @@
             placeholder="Характер, любимые игры, особенности"
           ></textarea>
         </label>
-        <fieldset>
-          <legend>Цвет вашей территории</legend>
-          <div class="colors">
-            <label class="swatch green"><input
-                type="radio"
-                name="color"
-                value="#397C63"
-                checked
-              /><span>✓</span></label>
-            <label class="swatch blue"><input
-                type="radio"
-                name="color"
-                value="#527DE0"
-              /><span>✓</span></label>
-            <label class="swatch purple"><input
-                type="radio"
-                name="color"
-                value="#B66ACC"
-              /><span>✓</span></label>
-            <label class="swatch gold"><input
-                type="radio"
-                name="color"
-                value="#E9A33B"
-              /><span>✓</span></label>
-            <label class="swatch pink"><input
-                type="radio"
-                name="color"
-                value="#D85B67"
-              /><span>✓</span></label>
-            <label class="swatch teal"><input
-                type="radio"
-                name="color"
-                value="#4CA5AB"
-              /><span>✓</span></label>
-          </div>
+        <fieldset class="appearance">
+          <legend>Маркировка участка</legend>
+          <label>Оттенок Hue <output id="hue-value">150°</output><input
+              type="range"
+              id="pet-hue"
+              name="hue"
+              min="0"
+              max="359"
+              value="150"
+            ></label>
+          <label>Насыщенность<input
+              type="range"
+              id="pet-saturation"
+              name="saturation"
+              min="20"
+              max="100"
+              value="55"
+            ></label>
+          <label>Плотность заливки<input
+              type="range"
+              id="pet-opacity"
+              name="opacity"
+              min="0.15"
+              max="0.8"
+              step="0.05"
+              value="0.35"
+            ></label>
+          <label>Узор<select id="pet-pattern" name="pattern">
+              <option value="solid">Сплошной</option>
+              <option value="camo">Камуфляж</option>
+              <option value="stripes">Полоски</option>
+              <option value="grid">Сетка</option>
+            </select></label>
+          <svg
+            id="paint-preview"
+            viewBox="0 0 200 55"
+            role="img"
+            aria-label="Образец маркировки"
+          >
+            <path d="M1 1H199V54H1Z" />
+          </svg>
         </fieldset>
         <p id="profile-error" class="error" role="alert"></p>
         <button type="submit" id="save-profile" class="primary">
-          Сохранить профиль <span>✓</span>
+          Сохранить досье <span>✓</span>
         </button>
       </form>
     </dialog>
@@ -199,7 +237,7 @@
         <button class="close-button" id="close-owner" aria-label="Закрыть">
           ×
         </button><img id="owner-photo" alt="Фото владельца территории" />
-        <p class="eyebrow">ХОЗЯИН ЭТОЙ ТЕРРИТОРИИ</p>
+        <p class="eyebrow">АГЕНТ ПОД НАБЛЮДЕНИЕМ</p>
         <h2 id="owner-name"></h2>
         <p id="owner-description"></p>
         <button id="owner-done" class="secondary">Вернуться на карту</button>
