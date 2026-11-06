@@ -2,7 +2,7 @@
 import test from "node:test";
 import { createLocationSource } from "../web/location.mjs";
 import assert from "node:assert/strict";
-import { goodFix, shouldAppend, meters } from "../web/tracking.mjs";
+import { goodFix, shouldAppend, meters, photoSize } from "../web/tracking.mjs";
 const point = { longitude: 20, latitude: 54, accuracy: 3, timestamp: 100 };
 test("точность GPS, координаты и неподвижный шум", () => {
   assert.equal(goodFix(point), true);
@@ -66,4 +66,9 @@ test("без Telegram остаётся браузерный Geolocation и от�
   );
   cleanup();
   assert.equal(cleared, true);
+});
+
+test('фото карты увеличиваются с зумом, GPS принимает ровно 15 м',()=>{
+ let previous=0;for(let z=3;z<=19;z++){const size=photoSize(z);assert.ok(size>previous&&size>=16&&size<=64);previous=size;}
+ assert.equal(goodFix({...point,accuracy:15}),true);assert.equal(goodFix({...point,accuracy:15.001}),false);
 });

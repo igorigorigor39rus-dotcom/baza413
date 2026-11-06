@@ -1,3 +1,6 @@
+const CAMO_IMAGE = new URL("./assets/military-camo.png?v=0.5.0", import.meta.url).href;
+const svgIds = new WeakMap();
+let svgSequence = 0;
 export function hueColor(hue, saturation = 55) {
   const h = ((Number(hue) % 360) + 360) % 360,
     s = Number(saturation) / 100,
@@ -31,7 +34,8 @@ export function paintPath(layer, pet) {
     svg.prepend(defs);
   }
   const color = /^#[a-f0-9]{6}$/i.test(pet.color) ? pet.color : "#397c63";
-  const id = `paws-${pet.pattern}-${color.slice(1)}`;
+  if (!svgIds.has(svg)) svgIds.set(svg, ++svgSequence);
+  const id = `paws-${svgIds.get(svg)}-${pet.pattern}-${color.slice(1)}`;
   if (!defs.querySelector(`#${id}`)) {
     const make = (tag, attrs) => {
       const node = document.createElementNS(ns, tag);
@@ -67,19 +71,22 @@ export function paintPath(layer, pet) {
       );
     }
     if (pet.pattern === "camo") {
-      for (
-        const [cx, cy, rx, ry, fill] of [[4, 5, 9, 5, "#151d14"], [
-          19,
-          18,
-          10,
-          6,
-          "#faf1c8",
-        ], [18, 3, 6, 9, "#172818"]]
-      ) {
-        pattern.append(
-          make("ellipse", { cx, cy, rx, ry, fill, "fill-opacity": ".55" }),
-        );
-      }
+      pattern.setAttribute("width", "96");
+      pattern.setAttribute("height", "96");
+      pattern.replaceChildren(
+        make("image", {
+          href: CAMO_IMAGE,
+          width: 96,
+          height: 96,
+          preserveAspectRatio: "none",
+        }),
+        make("rect", {
+          width: 96,
+          height: 96,
+          fill: color,
+          "fill-opacity": ".2",
+        }),
+      );
     }
     defs.append(pattern);
   }

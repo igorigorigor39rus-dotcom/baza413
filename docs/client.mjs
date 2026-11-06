@@ -1,5 +1,5 @@
-import { API_URL } from "./config.mjs?v=0.4.0";
-import { createDemoApi } from "./demo.mjs?v=0.4.0";
+import { API_URL } from "./config.mjs?v=0.5.0";
+import { createDemoApi } from "./demo.mjs?v=0.5.0";
 
 // ?backend=python оставлен для локальных регрессионных тестов предыдущего
 // сервера. GitHub Pages и Supabase не запускают Python.

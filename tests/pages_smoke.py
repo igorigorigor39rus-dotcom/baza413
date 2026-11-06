@@ -46,11 +46,16 @@ def main():
         assert len(base64.b64decode(stored.split(',')[1]))<=1000000
         assert page.evaluate("() => getComputedStyle(document.querySelector('.app')).backgroundColor")=='rgb(32, 36, 43)'
         assert page.locator('#map-provider option[value=yandex]').count()==0
-        page.locator('#income-rules').click();assert '1 м²' in page.locator('#rules-dialog').inner_text();page.locator('#close-rules').click()
+        page.locator('#income-rules').click();assert '1 м²' in page.locator('#rules-dialog').inner_text();assert 'Для старых участков' not in ' '.join(page.locator('#rules-dialog').inner_text().split());page.locator('#close-rules').click()
         page.locator('#demo-button').click()
         for _ in range(4): page.locator('#demo-button').click()
         page.locator('#capture-button').click()
         page.wait_for_function('() => document.querySelector("#status").textContent.includes("Территория ваша")')
+        assert page.locator('.leaflet-overlay-pane path[fill^="url("]').count()>0
+        assert page.locator('pattern image[href*="military-camo.png"]').count()>0
+        before=page.locator('.pet-marker[title="Луна"] img').evaluate('el=>el.getBoundingClientRect().width')
+        page.locator('.leaflet-control-zoom-out').click()
+        page.wait_for_function("size=>document.querySelector('.pet-marker[title=\"Луна\"] img').getBoundingClientRect().width<size",arg=before)
         assert page.locator('.leaflet-overlay-pane path[fill^="url("]').count()>0
         page.locator('.pet-marker[title="Луна"]').click()
         assert '<script>' in page.locator('#owner-description').inner_text()
@@ -59,12 +64,14 @@ def main():
         assert 'недоступ' not in page.locator('#owner-bones').inner_text()
         page.locator('#owner-done').click()
         page.locator('#open-chat').click()
+        box=page.locator('#chat-dialog').bounding_box();assert abs(box['width']-390)<2 and abs(box['height']-844)<2
         page.locator('#chat-text').fill('<img src=x onerror=alert(1)> Сообщение агента')
         page.locator('#send-chat').click()
         page.wait_for_function("() => document.querySelector('#chat-messages').textContent.includes('Сообщение агента')")
         assert page.locator('#chat-messages img').count()==0
         page.locator('#close-chat').click()
         assert '🦴/час' in page.locator('#wallet-rate').inner_text()
+        page.locator('#open-top').click();page.locator('#top-body tr').first.wait_for();assert 1<=page.locator('#top-body tr').count()<=10;page.locator('#close-top').click()
         page.reload(wait_until='networkidle')
         assert 'Луна' in page.locator('#walk-title').inner_text()
         assert 'м² ваших' in page.locator('#area-label').inner_text()

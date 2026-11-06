@@ -44,14 +44,17 @@ def main():
                 raise RuntimeError('GitHub Pages содержит другую версию конфигурации. Обновите docs/.')
     except (HTTPError,URLError):
         raise RuntimeError('GitHub Pages ещё не доступен. Включите prototype /docs в Settings → Pages и дождитесь публикации.') from None
-    token = getpass('НОВЫЙ токен бота из BotFather (не отображается): ').strip()
+    token = getpass('Действующий токен бота из BotFather (не отображается): ').strip()
     secret = getpass('WEBHOOK_SECRET, который вы сохранили в Supabase (не отображается): ').strip()
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{32,256}',secret):
         raise RuntimeError('Укажите токен и WEBHOOK_SECRET из 32–256 букв, цифр, _ или -.')
     api = f'{PROJECT_URL}/functions/v1/paws-api'
     if not request(api+'/health').get('ok'):
         raise RuntimeError('Supabase ещё не готов.')
-    if request(api+'/api/config').get('appUrl') != APP_URL:
+    config=request(api+'/api/config')
+    if not config.get('features',{}).get('liveTracking'):
+        raise RuntimeError('Сначала установите SQL и Edge Function v.0.5; нужен приём edited_message.')
+    if config.get('appUrl') != APP_URL:
         raise RuntimeError('В APP_URL в Supabase должен быть адрес из README, включая /baza413/ в конце.')
     # Пустой update проверяет секрет, но не отправляет сообщений.
     request(api+'/webhook',{},headers={'X-Telegram-Bot-Api-Secret-Token':secret})
@@ -62,9 +65,9 @@ def main():
     info = bot('getMe')
     # Проверяем совпадение локального токена и секрета Edge, не создавая профиль.
     request(api+'/api/me',headers={'Authorization':'tma '+init_data(token,info['id'])})
-    result = bot('setWebhook',{'url':api+'/webhook','secret_token':secret,'allowed_updates':['message'],'drop_pending_updates':False})
+    result = bot('setWebhook',{'url':api+'/webhook','secret_token':secret,'allowed_updates':['message','edited_message'],'drop_pending_updates':False})
     if not result: raise RuntimeError('Webhook не установлен.')
-    bot('setMyCommands',{'commands':[{'command':'start','description':'Открыть карту и профиль питомца'},{'command':'help','description':'Как играть'},{'command':'privacy','description':'О данных'}]})
+    bot('setMyCommands',{'commands':[{'command':'start','description':'Открыть карту и профиль питомца'},{'command':'help','description':'Как играть'},{'command':'privacy','description':'О данных'},{'command':'status','description':'Фоновая прогулка: состояние'},{'command':'capture','description':'Захватить фоновый маршрут'},{'command':'cancel','description':'Отменить фоновую прогулку'}]})
     bot('setChatMenuButton',{'menu_button':{'type':'web_app','text':'Карта','web_app':{'url':APP_URL}}})
     print(f'Готово. Откройте @{info["username"]} и отправьте /start.')
     print('Компьютер теперь можно выключить: запросы обслуживает Supabase.')

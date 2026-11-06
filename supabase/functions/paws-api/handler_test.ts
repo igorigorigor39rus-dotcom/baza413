@@ -51,6 +51,8 @@ function fixture(
               chat: true,
               wallet: true,
               publicWallet: true,
+              liveTracking: true,
+              leaderboard: true,
               photoLimit: 1000000,
             }
             : { pet: null, area: 0 },
@@ -407,7 +409,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.4.0" && config.features.chat === false &&
+    config.version === "0.5.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -435,4 +437,125 @@ Deno.test("фото больше 1 МБ отклоняется до Storage", as
     }),
   );
   assert(r.status === 413 && calls.length === 0);
+});
+
+Deno.test("live: только подписанный Telegram update с владельцем личного чата", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.includes("api.telegram.org")
+        ? { ok: true, result: {} }
+        : { accepted: true, first: true },
+    )
+  );
+  const m = {
+    message_id: 7,
+    date: NOW - 20,
+    edit_date: NOW,
+    from: { id: 42 },
+    chat: { id: 42, type: "private" },
+    location: {
+      latitude: 54,
+      longitude: 20,
+      horizontal_accuracy: 12,
+      live_period: 3600,
+    },
+  };
+  const r = await f.handler(
+    await request("/webhook", "POST", { update_id: 20, edited_message: m }, {
+      "X-Telegram-Bot-Api-Secret-Token": SECRET,
+    }),
+  );
+  assert(r.status === 200);
+  const c = f.calls.find((c) => c.url.endsWith("/paws_live_point"))!;
+  const payload = JSON.parse(String(c.options.body));
+  assert(
+    payload.p_user === 42 && payload.p_timestamp === NOW &&
+      payload.p_accuracy === 12,
+  );
+  const before = f.calls.length;
+  await f.handler(
+    await request("/webhook", "POST", {
+      update_id: 21,
+      message: { ...m, from: { id: 43 } },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  assert(f.calls.length === before);
+  assert(
+    (await f.handler(await request("/api/live/point", "POST", {}))).status ===
+      404,
+  );
+});
+Deno.test("live: неизвестная точность не превращается в ноль", async () => {
+  const f = fixture(() =>
+    Response.json({ accepted: false, reason: "accuracy" })
+  );
+  const r = await f.handler(
+    await request("/webhook", "POST", {
+      update_id: 21,
+      edited_message: {
+        message_id: 7,
+        date: NOW,
+        from: { id: 42 },
+        chat: { id: 42, type: "private" },
+        location: { latitude: 54, longitude: 20, live_period: 3600 },
+      },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  assert(r.status === 200);
+  assert(JSON.parse(String(f.calls[0].options.body)).p_accuracy === null);
+});
+Deno.test("live: ошибки открытого контура отвечают пользователю и ACK Telegram", async () => {
+  const f = fixture((url) =>
+    url.includes("api.telegram.org")
+      ? Response.json({ ok: true, result: {} })
+      : Response.json({
+        code: "P0001",
+        message: "Контур открыт. Вернитесь в пределах 15 м.",
+      }, { status: 400 })
+  );
+  const r = await f.handler(
+    await request("/webhook", "POST", {
+      message: {
+        text: "/capture",
+        from: { id: 42 },
+        chat: { id: 42, type: "private" },
+      },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  assert(r.status === 200);
+  assert(f.calls.some((c) => c.url.includes("/sendMessage")));
+});
+Deno.test("live: старт при погрешности 15 м, запрет более 15", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      url.includes("api.telegram.org")
+        ? { ok: true, result: {} }
+        : { walk: { id: "live" } },
+    )
+  );
+  assert(
+    (await f.handler(
+      await request("/api/live/start", "POST", { accuracy: 15 }),
+    )).status === 200,
+  );
+  const before = f.calls.length;
+  assert(
+    (await f.handler(
+      await request("/api/live/start", "POST", { accuracy: 15.01 }),
+    )).status === 422,
+  );
+  assert(f.calls.length === before);
+});
+Deno.test("TOP: проверенный пользователь, порядок сервера и публичные аватары", async () => {
+  const f = fixture(() =>
+    Response.json({
+      agents: [{ pet: { id: "99", name: "Лидер" }, wallet: { balance: 100 } }],
+    })
+  );
+  const r = await f.handler(await request("/api/top"));
+  const data = await r.json();
+  assert(
+    data.agents[0].pet.id === "99" && data.agents[0].wallet.balance === 100,
+  );
+  assert(JSON.parse(String(f.calls[0].options.body)).p_user === 42);
 });

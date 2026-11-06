@@ -162,7 +162,74 @@ export function createHandler(deps: Dependencies) {
         )
       ) throw new ApiError(401, "Недействительный webhook.");
       const update = await jsonBody(req);
-      const m = update.message as Record<string, unknown> | undefined;
+      const m = (update.message ?? update.edited_message) as
+        | Record<string, unknown>
+        | undefined;
+      const location = m?.location as Record<string, unknown> | undefined;
+      const sender = m?.from as Record<string, unknown> | undefined;
+      const locationChat = m?.chat as Record<string, unknown> | undefined;
+      if (
+        location && locationChat?.type === "private" &&
+        sender?.id === locationChat.id && !sender?.is_bot &&
+        !m?.forward_origin && !m?.forward_date && !m?.via_bot
+      ) {
+        try {
+          const id = number(locationChat.id, 1, 2 ** 52 - 1);
+          if (!Number.isSafeInteger(id)) {
+            throw new ApiError(422, "Некорректный владелец геопозиции.");
+          }
+          const message = number(m?.message_id, 1, 2 ** 52 - 1),
+            updateId = number(update.update_id, 0, 2 ** 52 - 1);
+          if (
+            !Number.isSafeInteger(message) || !Number.isSafeInteger(updateId)
+          ) {
+            throw new ApiError(422, "Некорректное обновление.");
+          }
+          const result = await rpc("paws_live_point", {
+            p_user: id,
+            p_message: message,
+            p_update: updateId,
+            p_timestamp: number(m?.edit_date ?? m?.date, 0, 1e12),
+            p_longitude: number(location.longitude, -180, 180),
+            p_latitude: number(location.latitude, -85, 85),
+            p_accuracy: typeof location.horizontal_accuracy === "number"
+              ? number(location.horizontal_accuracy, 0, 1500)
+              : null,
+            p_period: typeof location.live_period === "number"
+              ? number(location.live_period, 0, 2147483647)
+              : null,
+          });
+          if (result.first) {
+            await bot("sendMessage", {
+              chat_id: id,
+              text:
+                "Фоновая запись началась. Telegram может передавать координаты при выключенном дисплее, если разрешён фоновый доступ к геопозиции. Вернитесь к старту в пределах 15 м, затем /capture. /status — состояние, /cancel — отмена. При пропусках GPS захват отклоняется.",
+            });
+          } else if (result.reason === "gap") {
+            await bot("sendMessage", { chat_id: id, text: result.message });
+          } else if (!update.edited_message && result.reason === "accuracy") {
+            await bot("sendMessage", {
+              chat_id: id,
+              text:
+                "Трансляция получена, но точность GPS неизвестна или хуже 15 м. Выйдите на открытое место; неточные точки не записываются.",
+            });
+          } else if (!update.edited_message && result.reason === "not_live") {
+            await bot("sendMessage", {
+              chat_id: id,
+              text:
+                "Нужна трансляция геопозиции через скрепку → Геопозиция → Транслировать, а не разовая точка.",
+            });
+          }
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 422) {
+            await bot("sendMessage", {
+              chat_id: locationChat.id,
+              text: error.message,
+            });
+          } else throw error;
+        }
+        return { ok: true };
+      }
       const chat = m?.chat as Record<string, unknown> | undefined;
       if (
         !m || chat?.type !== "private" || typeof m.text !== "string" ||
@@ -173,16 +240,56 @@ export function createHandler(deps: Dependencies) {
         throw new ApiError(422, "Некорректный chat id.");
       }
       const command = m.text.trim().split(/\s/)[0].split("@")[0];
+      if (["/capture", "/cancel", "/status"].includes(command)) {
+        try {
+          if (command === "/capture") {
+            const result = await rpc("paws_live_capture", { p_user: id });
+            await bot("sendMessage", {
+              chat_id: id,
+              text: `Территория захвачена: ${
+                Math.round(Number(result.area))
+              } м². Остановите трансляцию геопозиции в Telegram.`,
+            });
+          } else if (command === "/cancel") {
+            await rpc("paws_live_cancel", { p_user: id });
+            await bot("sendMessage", {
+              chat_id: id,
+              text:
+                "Фоновая прогулка отменена, временные точки удалены. Остановите трансляцию геопозиции Telegram.",
+            });
+          } else {
+            const result = await rpc("paws_live_status", { p_user: id });
+            const walk = result.walk;
+            await bot("sendMessage", {
+              chat_id: id,
+              text: !walk
+                ? "Активной фоновой прогулки нет."
+                : walk.error
+                ? walk.error
+                : walk.points.length
+                ? `Принято точек: ${walk.points.length}. Последняя точность ±${
+                  walk.points.at(-1).accuracy
+                } м, ${Math.max(0, Math.round(now() - walk.points.at(-1).timestamp))} сек. назад. Точка не старше 15 секунд нужна для захвата. /capture — захват, /cancel — отмена.`
+                : "Ждём трансляцию с точностью ≤15 м. Начните её через скрепку в этом чате.",
+            });
+          }
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 422) {
+            await bot("sendMessage", { chat_id: id, text: e.message });
+          } else throw e;
+        }
+        return { ok: true };
+      }
       if (command === "/privacy") {
         await bot("sendMessage", {
           chat_id: id,
           text:
-            "Сохраняются Telegram ID, профиль питомца, фото и контуры захваченных территорий. Профиль и контуры видны другим участникам. Полный GPS-маршрут проверяется, но в базе не сохраняется. Не указывайте домашний адрес в профиле.",
+            "Сохраняются Telegram ID, профиль питомца, фото и контуры захваченных территорий. Профиль и контуры видны другим участникам. Обычный GPS-маршрут проверяется без сохранения. В фоновом режиме точки временно сохраняются в базе до завершения/отмены; просроченные маршруты очищаются при обращениях к фоновому API. Не указывайте домашний адрес в профиле.",
         });
       } else {await bot("sendMessage", {
           chat_id: id,
           text:
-            "🐾 Лапы на карте\n\nСоздайте профиль питомца, обойдите участок и вернитесь к старту. Кнопка откроет карту и GPS внутри Telegram. Оставляйте мини-приложение открытым во время прогулки.\n\n/privacy — о данных.",
+            "🐾 Бюро собачьих дел\n\nСоздайте досье питомца, обойдите участок и вернитесь в пределах 15 м от старта. Для старта и финиша нужна точность GPS ≤15 м.\n\nОбычная запись требует открытой карты. Для выключенного экрана выберите в приложении отдельный режим Telegram, затем отправьте этому боту трансляцию геопозиции. Фоновая работа зависит от телефона и разрешений. /status — состояние, /capture — захват, /cancel — отмена.\n\n/privacy — о данных.",
           reply_markup: {
             inline_keyboard: [[{
               text: "🐾 Открыть карту",
@@ -213,10 +320,10 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.4.0",
+        version: "0.5.0",
         features,
         demoMode: false,
-        closureMeters: 5,
+        closureMeters: 15,
         maxAccuracy: 15,
         demoRoute: null,
         appUrl,
@@ -225,8 +332,11 @@ export function createHandler(deps: Dependencies) {
     if (path === "/health" && req.method === "GET") {
       await rpc("paws_me", { p_user: 0 });
       await rpc("paws_wallet", { p_user: 0 });
-      await rpc("paws_capabilities", {});
-      return { ok: true, version: "0.4.0" };
+      const capabilities = await rpc("paws_capabilities", {});
+      if (!capabilities.liveTracking || !capabilities.leaderboard) {
+        throw new ApiError(503, "Установите полную миграцию v.0.5.");
+      }
+      return { ok: true, version: "0.5.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -236,6 +346,40 @@ export function createHandler(deps: Dependencies) {
       );
     }
     const user = await verifyInitData(authorization.slice(4), token, now());
+    if (path === "/api/top" && req.method === "GET") {
+      const result = await rpc("paws_top", { p_user: user });
+      result.agents = result.agents.map((a: Record<string, unknown>) => ({
+        ...a,
+        pet: pet(a.pet as Pet),
+      }));
+      return result;
+    }
+    if (path === "/api/live/status" && req.method === "GET") {
+      return await rpc("paws_live_status", { p_user: user });
+    }
+    if (path === "/api/live/start" && req.method === "POST") {
+      const b = await jsonBody(req);
+      const result = await rpc("paws_live_start", {
+        p_user: user,
+        p_accuracy: number(b.accuracy, 0, 15),
+      });
+      try {
+        await bot("sendMessage", {
+          chat_id: user,
+          text:
+            "Фоновая прогулка подготовлена. В этом чате: скрепка → Геопозиция → Транслировать геопозицию. Нужна точность ≤15 м. /status — состояние; /capture — захват после возврата к старту в пределах 15 м; /cancel — отмена. Разрешите Telegram доступ к геопозиции в фоне. Точки временно сохраняются на сервере.",
+        });
+      } catch {
+        /* интерфейс тоже показывает инструкцию, созданную прогулку не теряем */
+      }
+      return result;
+    }
+    if (path === "/api/live/capture" && req.method === "POST") {
+      return await rpc("paws_live_capture", { p_user: user });
+    }
+    if (path === "/api/live/cancel" && req.method === "POST") {
+      return await rpc("paws_live_cancel", { p_user: user });
+    }
     if (path === "/api/me" && req.method === "GET") {
       return profile(await rpc("paws_me", { p_user: user }));
     }

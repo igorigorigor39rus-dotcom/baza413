@@ -1,13 +1,19 @@
-import { goodFix, length, meters, shouldAppend } from "./tracking.mjs?v=0.4.0";
-import { createLocationSource } from "./location.mjs?v=0.4.0";
-import { createClient } from "./client.mjs?v=0.4.0";
+import {
+  goodFix,
+  length,
+  meters,
+  photoSize,
+  shouldAppend,
+} from "./tracking.mjs?v=0.5.0";
+import { createLocationSource } from "./location.mjs?v=0.5.0";
+import { createClient } from "./client.mjs?v=0.5.0";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=0.4.0";
-import { compressPhoto } from "./photo.mjs?v=0.4.0";
+} from "./appearance.mjs?v=0.5.0";
+import { compressPhoto } from "./photo.mjs?v=0.5.0";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -21,7 +27,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=0.4.0", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=0.5.0", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -44,8 +50,27 @@ const state = {
   previewUrl: null,
   refreshId: 0,
   wake: null,
+  live: null,
 };
-let map, territoriesLayer, routeLayer, startMarker, positionMarker;
+let map,
+  territoriesLayer,
+  routeLayer,
+  startMarker,
+  positionMarker,
+  liveRouteLayer;
+const photoMarkers = [];
+function photoIcon(pet) {
+  const size = photoSize(map.getZoom()), image = avatar(pet);
+  image.style.width = `${size}px`;
+  image.style.height = `${size}px`;
+  image.style.setProperty("--pet-color", pet.color);
+  return L.divIcon({
+    html: image,
+    className: "pet-marker",
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
 
 async function api(path, options = {}) {
   const headers = {
@@ -76,7 +101,7 @@ function avatar(pet) {
 }
 function render() {
   const walking = Boolean(state.walk);
-  $("start-button").hidden = walking ||
+  $("start-button").hidden = Boolean(state.live) || walking ||
     (state.config?.localDemo && Boolean(state.pet));
   $("start-button").disabled = state.busy || !state.connected;
   $("start-button").firstChild.textContent = state.starting
@@ -93,14 +118,29 @@ function render() {
       : !fresh || state.route.length < 4);
   $("cancel-button").hidden = !walking;
   $("cancel-button").disabled = state.busy;
-  $("demo-button").hidden = !state.config?.demoMode || !state.pet ||
+  $("demo-button").hidden = Boolean(state.live) || !state.config?.demoMode ||
+    !state.pet ||
     (walking && !state.walk.demo);
   $("demo-button").disabled = state.busy ||
     (state.walk?.demo && state.route.length >= state.config.demoRoute.length);
   $("demo-button").textContent = state.walk?.demo
     ? `Следующая точка · ${state.route.length}/${state.config.demoRoute.length}`
     : "Пройти демомаршрут";
-  $("profile-button").disabled = !state.connected || walking || state.busy ||
+  $("live-start").hidden = Boolean(state.live);
+  $("live-start").disabled = state.busy || walking || !state.connected ||
+    client.isDemo || !state.config?.features?.liveTracking;
+  $("live-note").hidden = client.isDemo || Boolean(state.live);
+  $("live-note").textContent = state.config?.features?.liveTracking
+    ? "Отдельный экспериментальный режим через трансляцию геопозиции Telegram. Работа в фоне зависит от телефона и разрешений."
+    : "Режим с выключенным экраном станет доступен после обновления сервера до v.0.5.";
+  $("live-panel").hidden = !state.live;
+  const liveLast = state.live?.points.at(-1);
+  $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
+    !liveLast || Date.now() / 1000 - liveLast.timestamp > 15 ||
+    state.live.points.length < 4;
+  $("live-cancel").disabled = state.busy;
+  $("profile-button").disabled = Boolean(state.live) || !state.connected ||
+    walking || state.busy ||
     state.starting;
   $("walk-stats").hidden = !walking;
   $("walk-title").textContent = walking
@@ -132,6 +172,14 @@ function initMap() {
     maxBoundsViscosity: 1,
   }).setView([54.7104, 20.4522], 16);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
+  liveRouteLayer = L.polyline([], {
+    color: "#8eb3df",
+    weight: 4,
+    dashArray: "6 4",
+  }).addTo(map);
+  map.on("zoomend", () => {
+    for (const marker of photoMarkers) marker.setIcon(photoIcon(marker.agent));
+  });
   const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>',
@@ -190,6 +238,7 @@ async function refreshMap() {
   const data = await api(`/api/territories?${params}`);
   if (id !== state.refreshId) return;
   territoriesLayer.clearLayers();
+  photoMarkers.length = 0;
   for (const territory of data.territories) {
     const pet = data.pets[territory.ownerId];
     if (!pet) continue;
@@ -204,19 +253,12 @@ async function refreshMap() {
     })
       .on("click", () => showOwner(pet))
       .addTo(territoriesLayer);
-    const icon = avatar(pet);
-    icon.style.setProperty("--pet-color", pet.color);
-    L.marker(territory.marker, {
-      icon: L.divIcon({
-        html: icon,
-        className: "pet-marker",
-        iconSize: [44, 44],
-        iconAnchor: [22, 22],
-      }),
+    const marker = L.marker(territory.marker, {
+      icon: photoIcon(pet),
       title: pet.name,
-    })
-      .on("click", () => showOwner(pet))
-      .addTo(territoriesLayer);
+    }).on("click", () => showOwner(pet)).addTo(territoriesLayer);
+    marker.agent = pet;
+    photoMarkers.push(marker);
   }
   if (data.truncated) {
     message(
@@ -248,6 +290,9 @@ async function boot() {
       return;
     }
     state.config = await api("/api/config");
+    $("closure-hint").textContent = `Замкните маршрут не дальше ${
+      state.config.closureMeters ?? 15
+    } м от старта. Точность GPS на старте и финише — не хуже 15 м. Гуляйте только там, где это разрешено.`;
     $("server-notice").hidden = client.isDemo || client.isPython ||
       Boolean(
         state.config.features?.dossier && state.config.features?.chat &&
@@ -258,8 +303,11 @@ async function boot() {
     state.connected = true;
     await refreshMap();
     void refreshWallet();
+    await refreshLive();
     message(
-      state.config.demoMode
+      state.live
+        ? "Фоновая прогулка восстановлена. Координаты поступают из трансляции Telegram."
+        : state.config.demoMode
         ? "Это демо на этом устройстве. Попробуйте перезахватить участок Бублика без GPS."
         : "Обойдите участок и вернитесь к старту. Во время прогулки оставляйте мини-приложение открытым.",
     );
@@ -482,12 +530,12 @@ function onPosition(position, generation) {
   message(
     `Записываем прогулку · GPS ±${
       Math.round(p.accuracy)
-    } м. Вернитесь к старту в пределах 5 м.`,
+    } м. Вернитесь к старту в пределах ${state.config.closureMeters ?? 15} м.`,
   );
   render();
 }
 async function startWalk() {
-  if (state.busy || state.walk) return;
+  if (state.busy || state.walk || state.live) return;
   if (!state.pet) {
     editProfile();
     return;
@@ -498,9 +546,14 @@ async function startWalk() {
   try {
     const position = await currentPosition();
     if (generation !== state.generation) return;
-    if (!goodFix(positionSample(position))) {
+    const fix = positionSample(position);
+    if (!goodFix(fix) || Date.now() / 1000 - fix.timestamp > 15) {
       throw new Error(
-        "GPS пока неточный. Выйдите на открытое место и повторите.",
+        `Старт требует свежий GPS с погрешностью ≤15 м. Сейчас: ${
+          Number.isFinite(fix.accuracy)
+            ? "±" + Math.round(fix.accuracy) + " м"
+            : "точность неизвестна"
+        }. Выйдите на открытое место.`,
       );
     }
     const walk = await api("/api/walks", { method: "POST" });
@@ -800,3 +853,169 @@ $("chat-form").addEventListener("submit", async (e) => {
   }
 });
 setInterval(() => void refreshChat(), 10000);
+
+// Состояние фонового режима хранится на сервере, отдельно от браузерного GPS.
+let liveLoading = false, liveFittedId = null;
+async function refreshLive() {
+  if (
+    !state.connected || client.isDemo ||
+    !state.config?.features?.liveTracking || liveLoading
+  ) return;
+  liveLoading = true;
+  try {
+    const data = await api("/api/live/status");
+    const wasLive = Boolean(state.live);
+    state.live = data.walk;
+    liveRouteLayer.setLatLngs(
+      (data.walk?.points ?? []).map((p) => [p.latitude, p.longitude]),
+    );
+    if (state.live) {
+      const points = state.live.points,
+        last = points.at(-1),
+        age = last ? Date.now() / 1000 - last.timestamp : Infinity;
+      if (points.length && liveFittedId !== state.live.id) {
+        liveFittedId = state.live.id;
+        map.fitBounds(points.map((p) => [p.latitude, p.longitude]), {
+          padding: [30, 30],
+          maxZoom: 17,
+        });
+      }
+      $("live-status").textContent = state.live.error ||
+        (!last
+          ? "Ждём трансляцию геопозиции с точностью ≤15 м."
+          : `Принято точек: ${points.length}. GPS ±${
+            Math.round(last.accuracy)
+          } м, ${Math.max(0, Math.round(age))} сек. назад. ${
+            age > 15 ? "Для захвата дождитесь свежей точки." : ""
+          }`);
+    }
+    // Захват командой в чате бота тоже должен обновлять открытую карту.
+    if (wasLive && !state.live) {
+      await refreshMap();
+      await refreshMe();
+      await refreshWallet();
+    }
+    render();
+  } catch (e) {
+    $("live-status").textContent = e.message;
+  } finally {
+    liveLoading = false;
+  }
+}
+$("live-start").addEventListener("click", async () => {
+  if (state.busy || state.walk || state.live) return;
+  if (!state.pet) {
+    editProfile();
+    return;
+  }
+  busy(true);
+  try {
+    const p = positionSample(await currentPosition());
+    if (!goodFix(p) || Date.now() / 1000 - p.timestamp > 15) {
+      throw new Error(
+        "Нужен свежий GPS с точностью ≤15 м. Выйдите на открытое место.",
+      );
+    }
+    const data = await api("/api/live/start", {
+      method: "POST",
+      headers: json(),
+      body: JSON.stringify({ accuracy: p.accuracy }),
+    });
+    state.live = data.walk;
+    message(
+      "Запись подготовлена. Откройте чат бота и включите трансляцию геопозиции. Это отдельный режим Telegram, не браузерная запись.",
+    );
+    await refreshLive();
+  } catch (e) {
+    message(e.message);
+    void refreshLive();
+  } finally {
+    busy(false);
+  }
+});
+$("live-open-chat").addEventListener("click", () => {
+  if (telegram?.close) telegram.close();
+  else message("Вернитесь в личный чат бота и включите трансляцию геопозиции.");
+});
+$("live-capture").addEventListener("click", async () => {
+  if (state.busy || !state.live) return;
+  busy(true);
+  try {
+    const result = await api("/api/live/capture", { method: "POST" });
+    message(
+      `Захвачено ${
+        Math.round(result.area)
+      } м². Остановите трансляцию геопозиции Telegram.`,
+    );
+    await refreshLive();
+  } catch (e) {
+    message(e.message);
+  } finally {
+    busy(false);
+  }
+});
+$("live-cancel").addEventListener("click", async () => {
+  if (
+    state.busy || !state.live ||
+    !confirm("Отменить фоновую прогулку и удалить её точки?")
+  ) return;
+  busy(true);
+  try {
+    await api("/api/live/cancel", { method: "POST" });
+    await refreshLive();
+    message("Фоновая запись отменена. Остановите трансляцию в Telegram.");
+  } catch (e) {
+    message(e.message);
+  } finally {
+    busy(false);
+  }
+});
+setInterval(() => {
+  if (!document.hidden) void refreshLive();
+}, 10000);
+$("open-top").addEventListener("click", async () => {
+  if (!state.connected) {
+    message("Откройте приложение через бота или включите демо.");
+    return;
+  }
+  $("top-dialog").showModal();
+  $("top-error").textContent = "Загружаем рейтинг…";
+  $("top-body").replaceChildren();
+  try {
+    const data = await api("/api/top");
+    let rank = 0;
+    for (const entry of data.agents) {
+      const row = document.createElement("tr"),
+        place = document.createElement("td"),
+        name = document.createElement("td"),
+        score = document.createElement("td"),
+        button = document.createElement("button");
+      place.textContent = String(++rank);
+      button.textContent = entry.pet.name;
+      button.className = "text-button";
+      button.addEventListener("click", () => {
+        $("top-dialog").close();
+        void showOwner(entry.pet);
+      });
+      name.append(button);
+      score.textContent = Math.floor(Number(entry.wallet.balance))
+        .toLocaleString("ru-RU");
+      row.append(place, name, score);
+      $("top-body").append(row);
+    }
+    $("top-error").textContent = data.agents.length ? "" : "Пока нет агентов.";
+  } catch (e) {
+    $("top-error").textContent = e.message;
+  }
+});
+$("close-top").addEventListener("click", () => $("top-dialog").close());
+
+function fitChat() {
+  if ($("chat-dialog").open) {
+    $("chat-dialog").style.height = `${
+      window.visualViewport?.height ?? innerHeight
+    }px`;
+  }
+}
+window.visualViewport?.addEventListener("resize", fitChat);
+$("open-chat").addEventListener("click", fitChat);

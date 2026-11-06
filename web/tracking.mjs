@@ -3,8 +3,7 @@ export function meters(a, b) {
   const radians = (x) => (x * Math.PI) / 180;
   const dLat = radians(b.latitude - a.latitude),
     dLon = radians(b.longitude - a.longitude);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
+  const h = Math.sin(dLat / 2) ** 2 +
     Math.cos(radians(a.latitude)) *
       Math.cos(radians(b.latitude)) *
       Math.sin(dLon / 2) ** 2;
@@ -29,4 +28,9 @@ export function shouldAppend(previous, p) {
 }
 export function length(points) {
   return points.slice(1).reduce((sum, p, i) => sum + meters(points[i], p), 0);
+}
+
+// Только фото на карте: размер досье/аватара в шапке не меняется.
+export function photoSize(zoom) {
+  return Math.round(Math.max(16, Math.min(64, 16 + (zoom - 3) * 3)));
 }

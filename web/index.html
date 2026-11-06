@@ -54,16 +54,19 @@
           </button>
         </div>
         <button id="open-chat" class="secondary">Оперативная связь</button>
-      </div><label class="map-choice">Карта <select id="map-provider">
+      </div>
+      <button id="open-top" class="text-button">
+        ТОП-10 Агентов · 🦴
+      </button><label class="map-choice">Карта <select id="map-provider">
           <option value="osm">OpenStreetMap</option>
           <option value="relief">OpenTopoMap · рельеф</option>
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_4.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_5.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.4</a>
+        >Инструкция v.0.5</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -102,6 +105,28 @@
         <button id="start-button" class="primary" disabled>
           Начать захват <span>↗</span>
         </button>
+        <button id="live-start" class="secondary">
+          С выключенным экраном · Telegram
+        </button>
+        <p id="live-note" class="hint"></p>
+        <section id="live-panel" hidden>
+          <h3>Фоновая прогулка Telegram</h3>
+          <p id="live-status" role="status"></p>
+          <p class="hint">
+            Передайте боту трансляцию геопозиции через скрепку. Для фоновой
+            записи нужны разрешения Telegram/ОС. Координаты временно сохраняются
+            на сервере.
+          </p>
+          <button id="live-open-chat" class="secondary">
+            Перейти в чат бота
+          </button>
+          <button id="live-capture" class="primary">
+            Захватить фоновый маршрут
+          </button>
+          <button id="live-cancel" class="text-button">
+            Отменить и удалить маршрут
+          </button>
+        </section>
         <button id="capture-button" class="primary" hidden>
           Захватить территорию <span>✓</span>
         </button>
@@ -115,9 +140,9 @@
           Повторить подключение
         </button>
         <a class="demo-link" href="?demo=1">Посмотреть демо без Telegram</a>
-        <p class="hint">
-          Замкните маршрут в пределах 5 м от старта. Гуляйте только там, где это
-          разрешено.
+        <p class="hint" id="closure-hint">
+          Замкните маршрут в пределах 15 м от старта. Гуляйте только там, где
+          это разрешено.
         </p>
       </section>
       <footer>Собираем впечатления, а не километры <span>✦</span></footer>
@@ -280,9 +305,34 @@
         🦴 сохраняются.
       </p>
       <p>
-        100 м² дают 100 🦴 в час; 50 м² — 50 🦴 в час. Для старых участков
-        начисление начинается с установки системы наград.
+        100 м² дают 100 🦴 в час; 50 м² — 50 🦴 в час.
       </p>
+    </dialog>
+    <dialog id="top-dialog">
+      <div class="dialog-heading">
+        <h2>ТОП-10 Агентов</h2>
+        <button
+          id="close-top"
+          class="close-button"
+          aria-label="Закрыть рейтинг"
+        >
+          ×
+        </button>
+      </div>
+      <p class="muted">
+        По текущему серверному балансу 🦴, включая начисления вне приложения.
+      </p>
+      <p id="top-error" class="error" role="status"></p>
+      <table class="ranking">
+        <thead>
+          <tr>
+            <th>№</th>
+            <th>Агент</th>
+            <th>🦴</th>
+          </tr>
+        </thead>
+        <tbody id="top-body"></tbody>
+      </table>
     </dialog>
   </body>
 </html>

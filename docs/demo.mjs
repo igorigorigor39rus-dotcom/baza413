@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs?v=0.4.0";
+import { meters } from "./tracking.mjs?v=0.5.0";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -124,7 +124,7 @@ export function createDemoApi(storage, clipping) {
         demoMode: true,
         localDemo: true,
         demoRoute: DEMO_ROUTE,
-        closureMeters: 5,
+        closureMeters: 15,
         maxAccuracy: 15,
       };
     }
@@ -165,6 +165,16 @@ export function createDemoApi(storage, clipping) {
       const wallet = settleFor(id);
       save(data);
       return { ...pet, wallet };
+    }
+    if (path === "/api/top") {
+      const pets = [neighbor, ...(data.pet ? [data.pet] : [])];
+      const agents = pets.map((pet) => ({ pet, wallet: settleFor(pet.id) }))
+        .sort((a, b) =>
+          b.wallet.balance - a.wallet.balance ||
+          a.pet.id.localeCompare(b.pet.id)
+        ).slice(0, 10);
+      save(data);
+      return { agents };
     }
     if (path === "/api/chat" && method === "GET") {
       return { messages: data.messages ?? [] };
