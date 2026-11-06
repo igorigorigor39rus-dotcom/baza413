@@ -1047,6 +1047,29 @@ h1 span {
 .map-is-fullscreen {
   overflow: hidden;
 }
+#open-notifications {
+  padding: 8px 24px;
+}
+#notifications-list {
+  max-height: 60dvh;
+  overflow-y: auto;
+}
+#notifications-list article {
+  border-bottom: 1px solid var(--line);
+  padding: 12px;
+}
+#notifications-list .unread {
+  border-left: 3px solid #c2cbd8;
+  background: #303944;
+}
+#notifications-list p {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+#notifications-list time {
+  font-size: 12px;
+  color: var(--muted);
+}
 body.busy #map-fullscreen {
   pointer-events: auto;
 }

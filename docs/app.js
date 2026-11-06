@@ -4,19 +4,20 @@ import {
   meters,
   photoSize,
   shouldAppend,
-} from "./tracking.mjs?v=0.7.0";
-import { createLocationSource } from "./location.mjs?v=0.7.0";
-import { createPurchasing } from "./purchasing.mjs?v=0.7.0";
-import { createMapFullscreen } from "./fullscreen.mjs?v=0.7.0";
-import { setBonesText } from "./numbers.mjs?v=0.7.0";
-import { createClient } from "./client.mjs?v=0.7.0";
+} from "./tracking.mjs?v=0.7.1";
+import { createLocationSource } from "./location.mjs?v=0.7.1";
+import { createPurchasing } from "./purchasing.mjs?v=0.7.1";
+import { createMapFullscreen } from "./fullscreen.mjs?v=0.7.1";
+import { createNotifications } from "./notifications.mjs?v=0.7.1";
+import { setBonesText } from "./numbers.mjs?v=0.7.1";
+import { createClient } from "./client.mjs?v=0.7.1";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=0.7.0";
-import { compressPhoto } from "./photo.mjs?v=0.7.0";
+} from "./appearance.mjs?v=0.7.1";
+import { compressPhoto } from "./photo.mjs?v=0.7.1";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -30,7 +31,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=0.7.0", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=0.7.1", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -66,6 +67,7 @@ let map,
   liveRouteLayer;
 let purchasing;
 let fullscreen;
+let notifications;
 const photoMarkers = [];
 function photoIcon(pet) {
   const size = photoSize(map.getZoom()), image = avatar(pet);
@@ -170,6 +172,7 @@ function render() {
     : "—";
   purchasing?.refresh();
   fullscreen?.refresh();
+  notifications?.render();
 }
 
 function initMap() {
@@ -254,6 +257,7 @@ function initMap() {
     message,
   });
   fullscreen = createMapFullscreen({ map, telegram, context: () => state });
+  notifications = createNotifications({ api, context: () => state });
 }
 async function refreshMap() {
   const id = ++state.refreshId;
@@ -340,6 +344,7 @@ async function boot() {
     state.connected = true;
     await refreshMap();
     void refreshWallet();
+    void notifications.refresh();
     await refreshLive();
     message(
       state.live

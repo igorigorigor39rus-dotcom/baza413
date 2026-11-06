@@ -41,7 +41,11 @@ export function createPurchasing(
       ? `Отметьте участок точками на карте. 1 м² новой площади = 10 🦴. Итог округляется вверх до целой 🦴. ${
         s.config.features.unlimitedPurchases &&
           s.config.features.mergeOwnPurchases
-          ? "Ограничений по площади и радиусу покупки нет. Свои территории можно расширять и объединять."
+          ? `Ограничений по площади и радиусу покупки нет. Свои территории можно расширять и объединять. ${
+            s.config.features.foreignBuyouts
+              ? "Чужую землю можно выкупить: 10% её стоимости получат прежние владельцы."
+              : "Для выкупа чужой земли обновите сервер до v.0.7.1."
+          }`
           : "Для покупки без ограничения площади и объединения своих участков обновите сервер до v.0.7."
       }`
       : "Покупка участков станет доступна после обновления сервера.";
@@ -112,7 +116,7 @@ export function createPurchasing(
       ? `Поставьте минимум 3 точки. Сейчас: ${vertices.length}. Точки можно перетаскивать.`
       : `Предварительно ≈${
         format(estimateArea(vertices))
-      } м². Проверяем площадь, цену и свободность…`;
+      } м². Проверяем площадь, цену и владельцев…`;
     if (vertices.length < 3) return;
     timer = setTimeout(async () => {
       try {
@@ -131,9 +135,16 @@ export function createPurchasing(
               ? `Свой участок объединится с покупкой. Общая площадь: ${
                 format(result.totalArea)
               } м².`
+              : Number(result.foreignArea) > 0
+              ? "Территория будет выкуплена."
               : "Участок свободен."
             : `Недостаточно 🦴. Ваш баланс: ${formatBones(result.balance)}.`
         }`;
+        if (Number(result.foreignArea) > 0) {
+          $("purchase-status").textContent += ` Выкупается чужая площадь: ${
+            format(result.foreignArea)
+          } м², владельцев: ${result.ownersCount}. Репарации включены в цену.`;
+        }
         $("purchase-status").title = `Стоимость: ${
           fullBones(result.cost)
         } 🦴. Баланс: ${fullBones(result.balance)} 🦴.`;
@@ -178,6 +189,10 @@ export function createPurchasing(
       context().busy || !quote?.affordable ||
       !confirm(
         `Добавить ${format(quote.area)} м² за ${fullBones(quote.cost)} 🦴?${
+          Number(quote.foreignArea) > 0
+            ? " Владельцы выкупаемой земли получат 10% стоимости своих частей, без доплаты с вашей стороны."
+            : ""
+        }${
           quote.merged
             ? " Свои территории будут объединены; уже принадлежащая вам площадь не оплачивается повторно."
             : ""

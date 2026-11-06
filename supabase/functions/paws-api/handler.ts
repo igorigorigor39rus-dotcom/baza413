@@ -5,6 +5,7 @@ type Dependencies = {
   env: (name: string) => string | undefined;
   fetch: typeof fetch;
   now?: () => number;
+  defer?: (task: Promise<void>) => void;
 };
 type Pet = Record<string, unknown> & { photo_key?: string | null };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -132,21 +133,76 @@ export function createHandler(deps: Dependencies) {
   function profile(value: { pet: Pet | null; area: number }) {
     return { ...value, pet: pet(value.pet) };
   }
-  async function bot(method: string, payload: Record<string, unknown>) {
+  async function bot(
+    method: string,
+    payload: Record<string, unknown>,
+    timeoutMs?: number,
+  ) {
     if (!token) {
       throw new ApiError(503, "В Supabase не задан TELEGRAM_BOT_TOKEN.");
     }
-    const response = await send(
-      `https://api.telegram.org/bot${token}/${method}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    );
+    const controller = timeoutMs ? new AbortController() : undefined;
+    const timer = controller
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
+    let response: Response;
+    try {
+      response = await send(
+        `https://api.telegram.org/bot${token}/${method}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller?.signal,
+        },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) throw new ApiError(503, "Telegram временно недоступен.");
     const data = await response.json();
     if (!data.ok) throw new ApiError(503, "Telegram отклонил запрос бота.");
+  }
+  async function deliverNotifications(filters: Record<string, unknown>) {
+    try {
+      // Очередь остаётся в БД. Следующее обращение обработает оставшееся,
+      // если один запрос не успеет отправить большую рассылку.
+      for (let batch = 0; batch < 4; batch++) {
+        const claimed = await rpc("paws_notify_claim", {
+          ...filters,
+          p_limit: 20,
+        });
+        if (!Array.isArray(claimed.messages) || !claimed.messages.length) break;
+        for (let offset = 0; offset < claimed.messages.length; offset += 4) {
+          await Promise.all(
+            claimed.messages.slice(offset, offset + 4).map(
+              async (note: Record<string, unknown>) => {
+                let ok = false;
+                try {
+                  await bot("sendMessage", {
+                    chat_id: Number(note.recipientId),
+                    text: note.message,
+                  }, 10000);
+                  ok = true;
+                } catch {
+                  /* Запись и выплата сохраняются при недоступности Telegram. */
+                }
+                await rpc("paws_notify_finish", {
+                  p_id: note.id,
+                  p_token: note.leaseToken,
+                  p_ok: ok,
+                });
+              },
+            ),
+          );
+        }
+      }
+    } catch { /* Просроченная аренда позволит повторить доставку позднее. */ }
+  }
+  async function scheduleNotifications(filters: Record<string, unknown>) {
+    const task = deliverNotifications(filters);
+    if (deps.defer) deps.defer(task);
+    else await task; // В тестах проверяем доставку без настоящего EdgeRuntime.
   }
   const walkButtons = {
     inline_keyboard: [
@@ -364,7 +420,7 @@ export function createHandler(deps: Dependencies) {
         await bot("sendMessage", {
           chat_id: id,
           text:
-            "Сохраняются Telegram ID, профиль питомца, фото и контуры захваченных территорий. Профиль и контуры видны другим участникам. Обычный GPS-маршрут проверяется без сохранения. В фоновом режиме точки временно сохраняются в базе до завершения/отмены; просроченные маршруты очищаются при обращениях к фоновому API. Не указывайте домашний адрес в профиле.",
+            "Сохраняются Telegram ID, профиль питомца, фото и контуры захваченных территорий. Профиль и контуры видны другим участникам. История выкупа и репараций сохраняется; уведомление доступно только получателю. Обычный GPS-маршрут проверяется без сохранения. В фоновом режиме точки временно сохраняются в базе до завершения/отмены; просроченные маршруты очищаются при обращениях к фоновому API. Не указывайте домашний адрес в профиле.",
         });
       } else {await bot("sendMessage", {
           chat_id: id,
@@ -395,7 +451,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.7.0",
+        version: "0.7.1",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -411,11 +467,12 @@ export function createHandler(deps: Dependencies) {
       if (
         !capabilities.autoLiveStart || !capabilities.crossingRoutes ||
         !capabilities.purchases || !capabilities.territoryLeaderboard ||
-        !capabilities.unlimitedPurchases || !capabilities.mergeOwnPurchases
+        !capabilities.unlimitedPurchases || !capabilities.mergeOwnPurchases ||
+        !capabilities.foreignBuyouts || !capabilities.notifications
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.0.7.");
+        throw new ApiError(503, "Установите полную миграцию v.0.7.1.");
       }
-      return { ok: true, version: "0.7.0" };
+      return { ok: true, version: "0.7.1" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -425,6 +482,24 @@ export function createHandler(deps: Dependencies) {
       );
     }
     const user = await verifyInitData(authorization.slice(4), token, now());
+    if (path === "/api/notifications" && req.method === "GET") {
+      const result = await rpc("paws_notifications", { p_user: user });
+      await scheduleNotifications({});
+      return result;
+    }
+    if (path === "/api/notifications/read" && req.method === "POST") {
+      const b = await jsonBody(req);
+      if (
+        !Array.isArray(b.ids) || b.ids.length > 50 ||
+        b.ids.some((id) => typeof id !== "string" || !UUID.test(id))
+      ) {
+        throw new ApiError(422, "Некорректные уведомления.");
+      }
+      return await rpc("paws_notifications_read", {
+        p_user: user,
+        p_ids: b.ids,
+      });
+    }
     if (path === "/api/live/instructions" && req.method === "POST") {
       await bot("sendMessage", {
         chat_id: user,
@@ -459,12 +534,16 @@ export function createHandler(deps: Dependencies) {
       if (typeof b.requestId !== "string" || !UUID.test(b.requestId)) {
         throw new ApiError(422, "Некорректный номер покупки.");
       }
-      return await rpc("paws_purchase", {
+      const result = await rpc("paws_purchase", {
         p_user: user,
         p_request: b.requestId,
         p_vertices: purchaseVertices(b.vertices),
         p_max_cost: number(b.maxCost, 0, Number.MAX_VALUE),
       });
+      if (Array.isArray(result.reparations) && result.reparations.length) {
+        await scheduleNotifications({ p_buyer: user, p_request: b.requestId });
+      }
+      return result;
     }
     if (path === "/api/live/status" && req.method === "GET") {
       return await rpc("paws_live_status", { p_user: user });

@@ -59,6 +59,8 @@ function fixture(
               territoryLeaderboard: true,
               unlimitedPurchases: true,
               mergeOwnPurchases: true,
+              foreignBuyouts: true,
+              notifications: true,
               maxAccuracy: 20,
               closureMeters: 20,
               photoLimit: 1000000,
@@ -417,7 +419,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.7.0" && config.features.chat === false &&
+    config.version === "0.7.1" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -756,4 +758,115 @@ Deno.test("v07: покупка дороже прежнего потолка пе
   );
   assert(r.status === 200);
   assert(JSON.parse(String(f.calls[0].options.body)).p_max_cost === 250000000);
+});
+
+Deno.test("v071: выплата подтверждается до отправки и сбой Telegram не отменяет покупку", async () => {
+  let claimed = false;
+  const f = fixture((url) => {
+    if (url.endsWith("/paws_purchase")) {
+      return Response.json({
+        id: "bought",
+        cost: 1000,
+        reparations: [{ ownerId: "43", amount: 100 }],
+      });
+    }
+    if (url.endsWith("/paws_notify_claim")) {
+      if (claimed) return Response.json({ messages: [] });
+      claimed = true;
+      return Response.json({
+        messages: [{
+          id: "00000000-0000-0000-0000-000000000001",
+          recipientId: "43",
+          message:
+            "Рекс выкупил вашу территорию, вам выплачены репарации в количестве 100 🦴.",
+          leaseToken: "00000000-0000-0000-0000-000000000002",
+        }],
+      });
+    }
+    if (url.includes("api.telegram.org")) {
+      return Response.json({ ok: false }, { status: 403 });
+    }
+    return Response.json({ ok: true });
+  });
+  const response = await f.handler(
+    await request("/api/purchases", "POST", {
+      requestId: "00000000-0000-0000-0000-000000000001",
+      maxCost: 1000,
+      vertices: [{ longitude: 20, latitude: 54 }, {
+        longitude: 20.001,
+        latitude: 54,
+      }, { longitude: 20, latitude: 54.001 }],
+    }),
+  );
+  assert(response.status === 200 && (await response.json()).id === "bought");
+  assert(f.calls[0].url.endsWith("/paws_purchase"));
+  const sent = f.calls.find((c) => c.url.endsWith("/sendMessage"))!;
+  assert(JSON.parse(String(sent.options.body)).chat_id === 43);
+  const finish = f.calls.find((c) => c.url.endsWith("/paws_notify_finish"))!;
+  assert(JSON.parse(String(finish.options.body)).p_ok === false);
+});
+
+Deno.test("v071: успешная доставка помечается, чужая история недоступна", async () => {
+  let claimed = false;
+  const f = fixture((url) => {
+    if (url.endsWith("/paws_notifications")) {
+      return Response.json({ notifications: [], unread: 0 });
+    }
+    if (url.endsWith("/paws_notify_claim")) {
+      if (claimed) return Response.json({ messages: [] });
+      claimed = true;
+      return Response.json({
+        messages: [{
+          id: "id",
+          recipientId: "43",
+          message: "notification",
+          leaseToken: "lease",
+        }],
+      });
+    }
+    return Response.json({ ok: true, result: {} });
+  });
+  assert(
+    (await f.handler(await request("/api/notifications?user_id=999")))
+      .status === 200,
+  );
+  assert(JSON.parse(String(f.calls[0].options.body)).p_user === 42);
+  assert(
+    JSON.parse(String(
+      f.calls.find((c) => c.url.endsWith("/paws_notify_finish"))!.options.body,
+    )).p_ok === true,
+  );
+  assert(
+    (await f.handler(
+      await request("/api/notifications/read", "POST", {
+        ids: ["00000000-0000-0000-0000-000000000001"],
+        user_id: 999,
+      }),
+    )).status === 200,
+  );
+  assert(JSON.parse(String(f.calls.at(-1)!.options.body)).p_user === 42);
+  assert(
+    (await f.handler(
+      await request("/api/notifications/read", "POST", { ids: ["invalid"] }),
+    )).status === 422,
+  );
+});
+
+Deno.test("v071: GPS-захват вызывает только capture без репараций и рассылки", async () => {
+  const f = fixture(() => Response.json({ id: "captured", area: 100 }));
+  const points = [0, 1, 2, 3].map((i) => ({
+    latitude: 54,
+    longitude: 20,
+    accuracy: 20,
+    timestamp: NOW - 3 + i,
+  }));
+  assert(
+    (await f.handler(
+      await request("/api/capture", "POST", {
+        walk_id: "00000000-0000-0000-0000-000000000001",
+        points,
+      }),
+    )).status === 200,
+  );
+  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_capture"));
 });

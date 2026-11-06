@@ -8,6 +8,7 @@ import {
 import { createLocationSource } from "./location.mjs";
 import { createPurchasing } from "./purchasing.mjs";
 import { createMapFullscreen } from "./fullscreen.mjs";
+import { createNotifications } from "./notifications.mjs";
 import { setBonesText } from "./numbers.mjs";
 import { createClient } from "./client.mjs";
 import {
@@ -66,6 +67,7 @@ let map,
   liveRouteLayer;
 let purchasing;
 let fullscreen;
+let notifications;
 const photoMarkers = [];
 function photoIcon(pet) {
   const size = photoSize(map.getZoom()), image = avatar(pet);
@@ -170,6 +172,7 @@ function render() {
     : "—";
   purchasing?.refresh();
   fullscreen?.refresh();
+  notifications?.render();
 }
 
 function initMap() {
@@ -254,6 +257,7 @@ function initMap() {
     message,
   });
   fullscreen = createMapFullscreen({ map, telegram, context: () => state });
+  notifications = createNotifications({ api, context: () => state });
 }
 async function refreshMap() {
   const id = ++state.refreshId;
@@ -340,6 +344,7 @@ async function boot() {
     state.connected = true;
     await refreshMap();
     void refreshWallet();
+    void notifications.refresh();
     await refreshLive();
     message(
       state.live

@@ -1,4 +1,4 @@
-import { meters } from "./tracking.mjs?v=0.7.0";
+import { meters } from "./tracking.mjs?v=0.7.1";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.
@@ -133,6 +133,8 @@ export function createDemoApi(storage, clipping) {
           territoryLeaderboard: true,
           unlimitedPurchases: true,
           mergeOwnPurchases: true,
+          foreignBuyouts: true,
+          notifications: true,
         },
       };
     }
@@ -161,6 +163,23 @@ export function createDemoApi(storage, clipping) {
       const w = settleFor(data.pet?.id ?? "demo-me");
       save(data);
       return w;
+    }
+    if (path === "/api/notifications") {
+      const own = (data.notifications ?? []).filter((n) =>
+        n.recipientId === data.pet?.id
+      );
+      return {
+        unread: own.filter((n) => !n.read).length,
+        notifications: own.slice(-50).reverse(),
+      };
+    }
+    if (path === "/api/notifications/read") {
+      const ids = JSON.parse(options.body).ids;
+      for (const n of data.notifications ?? []) {
+        if (n.recipientId === data.pet?.id && ids.includes(n.id)) n.read = true;
+      }
+      save(data);
+      return { ok: true };
     }
     if (path.startsWith("/api/pets/")) {
       const id = decodeURIComponent(path.split("/").at(-1)),
@@ -213,17 +232,6 @@ export function createDemoApi(storage, clipping) {
       if (!(area(polygon) > 0)) {
         throw new Error("Отметьте участок с положительной площадью.");
       }
-      if (
-        data.territories.some((t) =>
-          t.ownerId !== data.pet.id &&
-          area({
-              type: "MultiPolygon",
-              coordinates: clipping.intersection(t.geometry.coordinates, [
-                ring,
-              ]),
-            }) > 0
-        )
-      ) throw new Error("Участок пересекает чужую территорию.");
       const owned = data.territories.filter((t) => t.ownerId === data.pet.id);
       const free = clipping.difference(
         polygon.coordinates,
@@ -233,7 +241,7 @@ export function createDemoApi(storage, clipping) {
         cost = Math.ceil(sqm * 10);
       if (!(sqm > 0)) {
         throw new Error(
-          "Выбранная земля уже принадлежит вам. Добавьте свободную площадь.",
+          "Выбранная земля уже принадлежит вам. Добавьте нейтральную или чужую землю.",
         );
       }
       let coordinates = polygon.coordinates;
@@ -262,6 +270,26 @@ export function createDemoApi(storage, clipping) {
         }
       }
       const combined = { type: "MultiPolygon", coordinates };
+      const foreign = new Map();
+      const intersections = [];
+      for (
+        const t of data.territories.filter((t) => t.ownerId !== data.pet.id)
+      ) {
+        const intersection = clipping.intersection(
+          free,
+          t.geometry.coordinates,
+        );
+        const size = area({ type: "MultiPolygon", coordinates: intersection });
+        if (size > 0) {
+          foreign.set(t.ownerId, (foreign.get(t.ownerId) ?? 0) + size);
+          intersections.push(intersection);
+        }
+      }
+      const neutralArea = area({
+        type: "MultiPolygon",
+        coordinates: clipping.difference(free, ...intersections),
+      });
+      const foreignArea = [...foreign.values()].reduce((sum, n) => sum + n, 0);
       const wallet = settleFor(data.pet.id);
       if (path === "/api/purchases/quote") {
         return {
@@ -269,6 +297,8 @@ export function createDemoApi(storage, clipping) {
           selectedArea: area(polygon),
           totalArea: area(combined),
           merged: mergeIds.size > 0,
+          foreignArea,
+          ownersCount: foreign.size,
           cost,
           price: 10,
           balance: wallet.balance,
@@ -281,6 +311,22 @@ export function createDemoApi(storage, clipping) {
       ) throw new Error("Повторите расчёт покупки.");
       if (wallet.balance < cost) throw new Error("Недостаточно косточек.");
       wallet.balance -= cost;
+      const reparations = [];
+      data.notifications ??= [];
+      for (const [id, size] of foreign) {
+        const amount = cost * size / (foreignArea + neutralArea) / 10;
+        settleFor(id).balance += amount;
+        reparations.push({ ownerId: id, amount, area: size });
+        data.notifications.push({
+          id: crypto.randomUUID(),
+          recipientId: id,
+          amount: String(amount),
+          read: false,
+          createdAt: Date.now() / 1000,
+          message:
+            `${data.pet.name} выкупил вашу территорию, вам выплачены репарации в количестве ${amount} 🦴.`,
+        });
+      }
       const receipt = {
         id: crypto.randomUUID(),
         area: sqm,
@@ -288,8 +334,19 @@ export function createDemoApi(storage, clipping) {
         merged: mergeIds.size > 0,
         cost,
         requestId: b.requestId,
+        reparations,
       };
-      data.territories = data.territories.filter((t) => !mergeIds.has(t.id));
+      data.territories = data.territories.filter((t) => !mergeIds.has(t.id))
+        .flatMap((t) => {
+          if (t.ownerId === data.pet.id) return [t];
+          const coordinates = clipping.difference(
+            t.geometry.coordinates,
+            polygon.coordinates,
+          );
+          return coordinates.length
+            ? [{ ...t, geometry: { type: "MultiPolygon", coordinates } }]
+            : [];
+        });
       data.territories.push({
         id: receipt.id,
         ownerId: data.pet.id,
@@ -297,6 +354,10 @@ export function createDemoApi(storage, clipping) {
       });
       wallet.rate = data.territories.filter((t) => t.ownerId === data.pet.id)
         .reduce((sum, t) => sum + area(t.geometry), 0);
+      for (const id of foreign.keys()) {
+        data.wallets[id].rate = data.territories.filter((t) => t.ownerId === id)
+          .reduce((sum, t) => sum + area(t.geometry), 0);
+      }
       data.purchases ??= {};
       data.purchases[b.requestId] = receipt;
       save(data);

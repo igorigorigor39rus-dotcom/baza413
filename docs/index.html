@@ -13,14 +13,14 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.tile.opentopomap.org data: blob: https://tile.openstreetmap.org https://fywsqxijebneqkxusgro.supabase.co; connect-src 'self' https://fywsqxijebneqkxusgro.supabase.co; font-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; object-src 'none'"
     />
-    <link rel="icon" href="./assets/paw.svg?v=0.7.0" type="image/svg+xml" />
-    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.7.0" />
-    <link rel="stylesheet" href="./style.css?v=0.7.0" />
+    <link rel="icon" href="./assets/paw.svg?v=0.7.1" type="image/svg+xml" />
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css?v=0.7.1" />
+    <link rel="stylesheet" href="./style.css?v=0.7.1" />
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-    <script src="./vendor/leaflet/leaflet.js?v=0.7.0" defer></script>
-    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.7.0" defer></script>
+    <script src="./vendor/leaflet/leaflet.js?v=0.7.1" defer></script>
+    <script src="./vendor/polygon-clipping/polygon-clipping.js?v=0.7.1" defer></script>
 
-    <script src="./app.js?v=0.7.0" type="module"></script>
+    <script src="./app.js?v=0.7.1" type="module"></script>
   </head>
   <body>
     <main class="app">
@@ -35,7 +35,7 @@
           aria-label="Мой питомец"
           disabled
         >
-          <img src="./assets/paw.svg?v=0.7.0" alt="Досье питомца">
+          <img src="./assets/paw.svg?v=0.7.1" alt="Досье питомца">
         </button>
       </header>
       <div id="mode-banner" class="mode-banner" hidden>
@@ -57,16 +57,19 @@
       </div>
       <button id="open-top" class="text-button">
         ТОП-10 Генералов · 🦴
+      </button>
+      <button id="open-notifications" class="text-button" hidden>
+        Уведомления
       </button><label class="map-choice">Карта <select id="map-provider">
           <option value="osm">OpenStreetMap</option>
           <option value="relief">OpenTopoMap · рельеф</option>
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7_1.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.7</a>
+        >Инструкция v.0.7.1</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -229,7 +232,7 @@
         </p>
         <label class="photo-picker"><img
             id="photo-preview"
-            src="./assets/paw.svg?v=0.7.0"
+            src="./assets/paw.svg?v=0.7.1"
             alt="Фото питомца"
           /><span>Добавить или заменить фото<input
               id="photo-input"
@@ -363,10 +366,32 @@
         100 м² дают 100 🦴 в час; 50 м² — 50 🦴 в час.
       </p>
       <p>
-        Свободную землю можно купить: 1 м² = 10 🦴. Итоговая стоимость
-        округляется вверх до целой 🦴. Купленная территория приносит доход и
-        может быть перезахвачена прогулкой по общим правилам.
+        Нейтральную и чужую землю можно выкупить: 1 м² = 10 🦴. Итоговая
+        стоимость округляется вверх до целой 🦴. Купленная территория приносит
+        доход и может быть перезахвачена прогулкой по общим правилам.
       </p>
+      <p>
+        При выкупе чужой земли прежнему владельцу выплачивается 10% стоимости
+        его выкупленной части. Репарации входят в цену покупки. При физическом
+        захвате через GPS репарации не выплачиваются.
+      </p>
+    </dialog>
+    <dialog id="notifications-dialog" aria-labelledby="notifications-title">
+      <div class="dialog-heading">
+        <h2 id="notifications-title">Уведомления</h2>
+        <button
+          id="close-notifications"
+          class="close-button"
+          aria-label="Закрыть уведомления"
+        >
+          ×
+        </button>
+      </div>
+      <p id="notifications-status" role="status"></p>
+      <div id="notifications-list"></div>
+      <button id="notifications-read" class="secondary" disabled>
+        Отметить прочитанными
+      </button>
     </dialog>
     <dialog id="top-dialog">
       <div class="dialog-heading">

@@ -57,16 +57,19 @@
       </div>
       <button id="open-top" class="text-button">
         ТОП-10 Генералов · 🦴
+      </button>
+      <button id="open-notifications" class="text-button" hidden>
+        Уведомления
       </button><label class="map-choice">Карта <select id="map-provider">
           <option value="osm">OpenStreetMap</option>
           <option value="relief">OpenTopoMap · рельеф</option>
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_7_1.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.7</a>
+        >Инструкция v.0.7.1</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -363,10 +366,32 @@
         100 м² дают 100 🦴 в час; 50 м² — 50 🦴 в час.
       </p>
       <p>
-        Свободную землю можно купить: 1 м² = 10 🦴. Итоговая стоимость
-        округляется вверх до целой 🦴. Купленная территория приносит доход и
-        может быть перезахвачена прогулкой по общим правилам.
+        Нейтральную и чужую землю можно выкупить: 1 м² = 10 🦴. Итоговая
+        стоимость округляется вверх до целой 🦴. Купленная территория приносит
+        доход и может быть перезахвачена прогулкой по общим правилам.
       </p>
+      <p>
+        При выкупе чужой земли прежнему владельцу выплачивается 10% стоимости
+        его выкупленной части. Репарации входят в цену покупки. При физическом
+        захвате через GPS репарации не выплачиваются.
+      </p>
+    </dialog>
+    <dialog id="notifications-dialog" aria-labelledby="notifications-title">
+      <div class="dialog-heading">
+        <h2 id="notifications-title">Уведомления</h2>
+        <button
+          id="close-notifications"
+          class="close-button"
+          aria-label="Закрыть уведомления"
+        >
+          ×
+        </button>
+      </div>
+      <p id="notifications-status" role="status"></p>
+      <div id="notifications-list"></div>
+      <button id="notifications-read" class="secondary" disabled>
+        Отметить прочитанными
+      </button>
     </dialog>
     <dialog id="top-dialog">
       <div class="dialog-heading">
