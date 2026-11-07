@@ -483,7 +483,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "0.9.0",
+        version: "1.0.0",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -508,11 +508,12 @@ export function createHandler(deps: Dependencies) {
         !capabilities.reminders || !capabilities.largestTerritory ||
         !capabilities.dailyIncome || !capabilities.geoChat ||
         !capabilities.liveOnly || !capabilities.captureHelp ||
-        !capabilities.extraCamouflage
+        !capabilities.extraCamouflage || !capabilities.breeds ||
+        !capabilities.headquarters
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.0.9.");
+        throw new ApiError(503, "Установите полную миграцию v.1.0.");
       }
-      return { ok: true, version: "0.9.0" };
+      return { ok: true, version: "1.0.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -669,6 +670,8 @@ export function createHandler(deps: Dependencies) {
             "saturation",
             "opacity",
             "pattern",
+            "breedId",
+            "breedCustom",
           ].includes(k)
         )
       ) throw new ApiError(422, "Лишнее поле профиля.");
@@ -687,19 +690,38 @@ export function createHandler(deps: Dependencies) {
           !["solid", "stripes", "grid", "camo", "digital", "tiger", "flecktarn"]
             .includes(String(b.pattern))
         ) throw new ApiError(422, "Некорректный стиль заливки.");
+        if (
+          b.breedId !== undefined &&
+          (typeof b.breedId !== "string" || b.breedId.length > 80 ||
+            !(b.breedCustom == null ||
+              typeof b.breedCustom === "string" &&
+                b.breedCustom.trim().length <= 80))
+        ) throw new ApiError(422, "Проверьте породу питомца.");
         return profile(
-          await rpc("paws_save_dossier", {
-            p_user: user,
-            p_name: b.name.trim(),
-            p_age: number(b.age, 0, 35),
-            p_description: b.description.trim(),
-            p_color: b.color,
-            p_hue: hue,
-            p_saturation: saturation,
-            p_opacity: opacity,
-            p_pattern: b.pattern,
-          }),
+          await rpc(
+            b.breedId === undefined ? "paws_save_dossier" : "paws_save_general",
+            {
+              p_user: user,
+              p_name: b.name.trim(),
+              p_age: number(b.age, 0, 35),
+              p_description: b.description.trim(),
+              p_color: b.color,
+              p_hue: hue,
+              p_saturation: saturation,
+              p_opacity: opacity,
+              p_pattern: b.pattern,
+              ...(b.breedId === undefined ? {} : {
+                p_breed: b.breedId,
+                p_custom: typeof b.breedCustom === "string"
+                  ? b.breedCustom.trim()
+                  : null,
+              }),
+            },
+          ),
         );
+      }
+      if (b.breedId !== undefined) {
+        throw new ApiError(422, "Выберите породу и стиль заливки в досье.");
       }
       return profile(
         await rpc("paws_save_pet", {
@@ -710,6 +732,25 @@ export function createHandler(deps: Dependencies) {
           p_color: b.color,
         }),
       );
+    }
+    if (path === "/api/hq" && req.method === "GET") {
+      return await rpc("paws_hq", { p_user: user });
+    }
+    if (path === "/api/hq/upgrade" && req.method === "POST") {
+      const b = await jsonBody(req);
+      if (
+        typeof b.requestId !== "string" || !UUID.test(b.requestId) ||
+        typeof b.expectedLevel !== "number" ||
+        !Number.isInteger(b.expectedLevel) || b.expectedLevel < 1 ||
+        b.expectedLevel > 10 || Object.keys(b).some((k) =>
+          !["requestId", "expectedLevel"].includes(k)
+        )
+      ) throw new ApiError(422, "Проверьте уровень штаба и номер улучшения.");
+      return await rpc("paws_hq_upgrade", {
+        p_user: user,
+        p_request: b.requestId,
+        p_level: b.expectedLevel,
+      });
     }
     if (path === "/api/wallet" && req.method === "GET") {
       return await rpc("paws_wallet", { p_user: user });

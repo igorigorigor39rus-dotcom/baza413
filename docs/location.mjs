@@ -41,8 +41,8 @@ export function createLocationSource({ telegram, navigator, secureContext }) {
     if (await nativeAvailable()) {
       const location = await withTimeout((resolve, reject) =>
         manager.getLocation((value) =>
-          value ? resolve(value) : reject(failure()),
-        ),
+          value ? resolve(value) : reject(failure())
+        )
       );
       return {
         coords: {
@@ -53,16 +53,17 @@ export function createLocationSource({ telegram, navigator, secureContext }) {
         timestamp: Date.now(),
       };
     }
-    if (!secureContext || !navigator.geolocation)
+    if (!secureContext || !navigator.geolocation) {
       throw new Error(
-        "Для GPS нужен HTTPS и разрешение на геолокацию. На компьютере демо работает через localhost.",
+        "Для определения местоположения нужны HTTPS и разрешение на геолокацию.",
       );
+    }
     return new Promise((resolve, reject) =>
       navigator.geolocation.getCurrentPosition(
         resolve,
         () => reject(failure()),
         { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
-      ),
+      )
     );
   }
   // Возвращаем функцию отключения, чтобы экран не зависел от типа GPS-источника.

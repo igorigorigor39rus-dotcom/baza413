@@ -1,5 +1,5 @@
-import { dailyWallet } from "./income.mjs?v=0.9.0";
-import { meters } from "./tracking.mjs?v=0.9.0";
+import { dailyWallet } from "../../web/income.mjs";
+import { meters } from "../../web/tracking.mjs";
 
 // Полностью локальное демо. Оно не обращается к Supabase и не выдаёт фиктивные
 // координаты за настоящую прогулку. Отличается от общей серверной карты.

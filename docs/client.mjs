@@ -1,38 +1,30 @@
-import { API_URL } from "./config.mjs?v=0.9.0";
-import { createDemoApi } from "./demo.mjs?v=0.9.0";
-
-// ?backend=python оставлен для локальных регрессионных тестов предыдущего
-// сервера. GitHub Pages и Supabase не запускают Python.
-export function createClient({ location, storage, clipping, fetch: send }) {
-  const params = new URLSearchParams(location.search);
-  const isDemo = params.get("demo") === "1";
-  const isPython = params.get("backend") === "python";
-  if (isDemo) {
-    return { isDemo, isPython, api: createDemoApi(storage, clipping) };
-  }
+import { API_URL } from "./config.mjs?v=1.0.0";
+// Вход доступен только через подписанные данные Telegram. Параметры demo/backend
+// больше не переключают приложение на фиктивные кошельки или локальный сервер.
+export function createClient({ fetch: send }) {
   return {
-    isDemo,
-    isPython,
+    isDemo: false,
+    isPython: false,
     async api(path, options = {}) {
       let response;
       try {
-        response = await send(isPython ? path : `${API_URL}${path}`, options);
+        response = await send(`${API_URL}${path}`, options);
       } catch {
         throw new Error(
-          "Не удалось подключиться к Supabase. Проверьте интернет и установку функции paws-api.",
+          "Не удалось подключиться к Supabase. Проверьте интернет.",
         );
       }
       let data;
       try {
         data = await response.json();
       } catch {
-        throw new Error("Сервис ещё не настроен или вернул неожиданный ответ.");
+        throw new Error("Сервис вернул неожиданный ответ.");
       }
       if (!response.ok) {
         const error = new Error(
           typeof data.detail === "string"
             ? data.detail
-            : "Не удалось выполнить запрос. Проверьте настройки Supabase.",
+            : "Не удалось выполнить запрос.",
         );
         error.code = data.code;
         error.annulled = data.annulled === true;

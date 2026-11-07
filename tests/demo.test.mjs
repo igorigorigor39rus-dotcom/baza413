@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { createDemoApi } from "../web/demo.mjs";
+import { createDemoApi } from "./fixtures/legacy-demo.mjs";
 import { createClient } from "../web/client.mjs";
 const clipping = createRequire(import.meta.url)(
   "../web/vendor/polygon-clipping/polygon-clipping.js",

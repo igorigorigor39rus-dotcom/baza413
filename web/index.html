@@ -52,9 +52,6 @@
           <img src="./assets/paw.svg" alt="Досье питомца">
         </button>
       </header>
-      <div id="mode-banner" class="mode-banner" hidden>
-        ДЕМО НА ЭТОМ УСТРОЙСТВЕ · без Telegram
-      </div>
       <div class="office-bar">
         <div>
           <span>Резерв 🦴</span><strong id="wallet-balance">—</strong><small
@@ -67,7 +64,10 @@
             Правила 🦴
           </button>
         </div>
-        <button id="open-chat" class="secondary">Оперативная связь</button>
+        <div class="office-actions">
+          <button id="open-chat" class="secondary">Оперативная связь</button>
+          <button id="open-hq" class="secondary">Штаб</button>
+        </div>
       </div>
       <p id="wallet-payout" class="hint" role="status"></p>
       <button id="open-top" class="text-button">
@@ -84,10 +84,10 @@
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V0_9.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V1_0.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.0.9</a>
+        >Инструкция v.1.0</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -155,11 +155,6 @@
         <p id="status" class="status" role="status" aria-live="polite">
           Загружаем приложение…
         </p>
-        <div id="walk-stats" class="stats" hidden>
-          <span>Путь <strong id="distance">0 м</strong></span><span>До старта
-            <strong id="gap">0 м</strong></span><span>GPS <strong id="accuracy"
-            >—</strong></span>
-        </div>
         <div class="capture-guide">
           <strong>Захват — через чат бота</strong>
           <ol>
@@ -197,22 +192,9 @@
             Отменить и удалить маршрут
           </button>
         </section>
-        <button id="capture-button" class="primary" hidden>
-          Захватить демоучасток <span
-            class="action-glyph"
-            aria-hidden="true"
-          ><svg viewBox="0 0 24 24"><path d="m4 12 5.5 6 11-13" /></svg></span>
-        </button>
-        <button id="demo-button" class="secondary" hidden>
-          Пройти демомаршрут
-        </button>
-        <button id="cancel-button" class="text-button" hidden>
-          Отменить прогулку
-        </button>
         <button id="retry-button" class="secondary" hidden>
           Повторить подключение
         </button>
-        <a class="demo-link" href="?demo=1">Посмотреть демо без Telegram</a>
         <p class="hint" id="closure-hint">
           Замкните маршрут в пределах 20 м от старта. Гуляйте только там, где
           это разрешено.
@@ -220,6 +202,30 @@
       </section>
       <footer>Собираем впечатления, а не километры <span>✦</span></footer>
     </main>
+    <dialog id="hq-dialog" aria-labelledby="hq-title">
+      <div class="dialog-heading">
+        <h2 id="hq-title">Штаб Генерала</h2>
+        <button id="close-hq" class="close-button" aria-label="Закрыть штаб">
+          ×
+        </button>
+      </div>
+      <p id="hq-level" class="eyebrow"></p>
+      <div id="hq-scene" class="hq-scene"></div>
+      <p id="hq-pet-name"></p>
+      <div class="hq-meter">
+        <label for="hq-progress">Улучшение штаба</label><strong id="hq-percent"
+        >0%</strong><progress id="hq-progress" max="100" value="0">
+          0%
+        </progress><span>0% · начальный</span><span>100% · максимальный</span>
+      </div>
+      <p id="hq-balance"></p>
+      <p id="hq-cost" class="hint"></p>
+      <p id="hq-status" role="status"></p>
+      <button id="hq-upgrade" class="primary" disabled>Улучшить</button>
+      <button id="hq-profile" class="text-button">
+        Выбрать породу в досье
+      </button>
+    </dialog>
     <dialog id="chat-dialog">
       <div class="dialog-heading">
         <h2>Оперативная связь</h2>
@@ -314,6 +320,34 @@
             required
             placeholder="Например, Ричи"
           /></label>
+        <div class="breed-picker">
+          <label for="pet-breed">Порода питомца</label>
+          <div class="breed-input-row">
+            <span id="breed-icon"></span><input
+              id="pet-breed"
+              type="search"
+              maxlength="80"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="breed-results"
+              autocomplete="off"
+              placeholder="Введите породу: хаски, корги…"
+              required
+            />
+          </div>
+          <div
+            id="breed-results"
+            role="listbox"
+            aria-label="Породы собак"
+            hidden
+          >
+          </div>
+          <p id="breed-status" class="hint">
+            Поиск по русским названиям и синонимам. Можно указать свою породу
+            или метиса.
+          </p>
+        </div>
         <label>Возраст, лет<input
             name="age"
             id="pet-age"
@@ -418,6 +452,9 @@
           Показать территорию
         </button>
         <p id="owner-territory-status" role="status"></p>
+        <div class="owner-breed-row">
+          <span id="owner-breed-icon"></span><p id="owner-breed"></p>
+        </div>
         <p id="owner-description"></p>
         <p id="owner-bones" class="owner-bones" aria-label="Баланс косточек">
         </p>

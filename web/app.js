@@ -1,6 +1,9 @@
-import { length, meters, photoSize } from "./tracking.mjs";
+import { photoSize } from "./tracking.mjs";
 import { createLocationSource } from "./location.mjs";
 import { createPurchasing } from "./purchasing.mjs";
+import { createBreedPicker } from "./breeds.mjs";
+import { dogPortrait } from "./dog.mjs";
+import { createHeadquarters } from "./headquarters.mjs";
 import { createChat } from "./chat.mjs";
 import { formatDailyRate, payoutText } from "./income.mjs";
 import { createShop } from "./shop.mjs";
@@ -43,9 +46,6 @@ const state = {
   pet: null,
   connected: false,
   busy: false,
-  walk: null,
-  route: [],
-  latest: null,
   previewUrl: null,
   refreshId: 0,
   live: null,
@@ -55,14 +55,12 @@ const state = {
 const maxAccuracy = () => state.config?.maxAccuracy ?? 15;
 let map,
   territoriesLayer,
-  routeLayer,
-  startMarker,
-  positionMarker,
   liveRouteLayer;
 let purchasing;
 let fullscreen;
 let notifications;
-let shop, presence, ownerPet, focusedTerritory;
+let shop, presence, ownerPet, focusedTerritory, headquarters;
+const breedPicker = createBreedPicker();
 const photoMarkers = [];
 function photoIcon(pet) {
   const size = photoSize(map.getZoom()), image = avatar(pet);
@@ -105,27 +103,7 @@ function avatar(pet) {
   return img;
 }
 function render() {
-  const walking = Boolean(state.walk);
-  $("capture-button").hidden = !walking;
-  const fresh = state.latest &&
-    Date.now() / 1000 - state.latest.timestamp <= 15;
-  $("capture-button").disabled = state.busy ||
-    (state.walk?.demo
-      ? state.route.length < state.config.demoRoute.length
-      : !fresh || state.route.length < 4);
-  $("cancel-button").hidden = !walking;
-  $("cancel-button").disabled = state.busy;
-  $("demo-button").hidden = Boolean(state.live) || !state.config?.demoMode ||
-    !state.pet ||
-    (walking && !state.walk.demo);
-  $("demo-button").disabled = state.busy || state.buying ||
-    (state.walk?.demo && state.route.length >= state.config.demoRoute.length);
-  $("demo-button").textContent = state.walk?.demo
-    ? `Следующая точка · ${state.route.length}/${state.config.demoRoute.length}`
-    : "Пройти демомаршрут";
-  $("goto-bot").hidden = client.isDemo;
   $("goto-bot").disabled = state.busy || state.buying || !state.connected;
-  $("live-note").hidden = client.isDemo;
   $("live-panel").hidden = !state.live;
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
@@ -133,27 +111,16 @@ function render() {
     state.live.points.length < 4;
   $("live-cancel").disabled = state.busy;
   $("profile-button").disabled = Boolean(state.live) || !state.connected ||
-    walking || state.busy;
-  $("walk-stats").hidden = !walking;
-  $("walk-title").textContent = walking
-    ? "Идём за новыми открытиями"
-    : state.pet
+    state.busy;
+  $("walk-title").textContent = state.pet
     ? `На прогулку, ${state.pet.name}?`
     : "Откроем личное дело?";
-  $("distance").textContent = `${Math.round(length(state.route))} м`;
-  $("gap").textContent = `${
-    Math.round(
-      state.route.length ? meters(state.route[0], state.route.at(-1)) : 0,
-    )
-  } м`;
-  $("accuracy").textContent = state.latest
-    ? `±${Math.round(state.latest.accuracy)} м`
-    : "—";
   purchasing?.refresh();
   fullscreen?.refresh();
   notifications?.render();
   shop?.render();
   presence?.render();
+  headquarters?.render();
   $("show-my-territory").disabled = !state.pet ||
     !state.config?.features?.largestTerritory;
   $("show-owner-territory").disabled = !state.config?.features
@@ -214,7 +181,6 @@ function initMap() {
     }
   });
   territoriesLayer = L.layerGroup().addTo(map);
-  routeLayer = L.polyline([], { color: "#397C63", weight: 4 }).addTo(map);
   let timer;
   map.on("moveend", () => {
     clearTimeout(timer);
@@ -251,6 +217,12 @@ function initMap() {
     message,
   });
   presence = createPresence({ api, context: () => state });
+  headquarters = createHeadquarters({
+    api,
+    context: () => state,
+    onWallet: refreshWallet,
+    onProfile: editProfile,
+  });
   map.on("dragstart", () => {
     if (focusedTerritory) {
       map.removeLayer(focusedTerritory);
@@ -317,9 +289,9 @@ async function boot() {
   $("retry-button").hidden = true;
   try {
     initMap();
-    if (!client.isDemo && !client.isPython && !telegram?.initData) {
+    if (!telegram?.initData) {
       message(
-        "Откройте приложение через кнопку вашего Telegram-бота. Для знакомства с картой доступно локальное демо по ссылке ниже.",
+        "Откройте приложение через кнопку вашего Telegram-бота.",
       );
       state.connected = false;
       render();
@@ -329,7 +301,7 @@ async function boot() {
     $("closure-hint").textContent = `Замкните маршрут не дальше ${
       state.config.closureMeters ?? 15
     } м от старта. Точность GPS на старте и финише — не хуже ${maxAccuracy()} м. Пересечения трека ${
-      state.config.features?.crossingRoutes || client.isDemo
+      state.config.features?.crossingRoutes
         ? "разрешены: захватывается площадь внутри внешних границ"
         : "станут доступны после обновления сервера"
     }. Гуляйте только там, где это разрешено.${
@@ -337,14 +309,13 @@ async function boot() {
         ? " Средняя скорость — не выше 20 км/ч."
         : ""
     }`;
-    $("server-notice").hidden = client.isDemo || client.isPython ||
-      Boolean(
-        state.config.features?.dossier && state.config.features?.chat &&
-          state.config.features?.publicWallet &&
-          state.config.features?.dailyIncome &&
-          state.config.features?.geoChat && state.config.features?.liveOnly,
-      );
-    $("mode-banner").hidden = !state.config.demoMode;
+    $("server-notice").hidden = Boolean(
+      state.config.features?.dossier && state.config.features?.chat &&
+        state.config.features?.publicWallet &&
+        state.config.features?.dailyIncome &&
+        state.config.features?.geoChat && state.config.features?.liveOnly &&
+        state.config.features?.headquarters && state.config.features?.breeds,
+    );
     await refreshMe();
     state.connected = true;
     await refreshMap();
@@ -356,8 +327,6 @@ async function boot() {
         ? liveState.result.detail
         : state.live
         ? "Фоновая прогулка восстановлена. Координаты поступают из трансляции Telegram."
-        : state.config.demoMode
-        ? "Это демо на этом устройстве. Попробуйте перезахватить участок Бублика без GPS."
         : "Обойдите участок и вернитесь к старту. Для записи маршрута включите трансляцию геопозиции в чате бота.",
     );
     render();
@@ -370,8 +339,9 @@ async function boot() {
   }
 }
 function editProfile() {
-  if (state.walk || state.busy || !state.connected) return;
+  if (state.busy || !state.connected) return;
   const p = state.pet;
+  breedPicker.set(p);
   $("pet-name").value = p?.name || "";
   $("pet-age").value = p?.age ?? "";
   $("pet-description").value = p?.description || "";
@@ -403,11 +373,15 @@ $("profile-form").addEventListener("submit", async (event) => {
   $("profile-error").textContent = "";
   let saved = false;
   try {
+    if (!state.config?.features?.breeds) {
+      throw new Error("Сохранение породы пока недоступно. Попробуйте позже.");
+    }
     const compressed = photo ? await compressPhoto(photo) : null;
     await api("/api/me", {
       method: "PUT",
       headers: json(),
       body: JSON.stringify({
+        ...breedPicker.value(),
         name: data.get("name"),
         age: Number(data.get("age")),
         description: data.get("description"),
@@ -470,6 +444,8 @@ async function showOwner(pet) {
   $("owner-photo").alt = pet.name;
   $("owner-photo").style.borderColor = pet.color;
   $("owner-name").textContent = `${pet.name} · ${pet.age} лет`;
+  $("owner-breed").textContent = pet.breedName ?? "Порода пока не указана";
+  $("owner-breed-icon").replaceChildren(dogPortrait(pet));
   $("owner-description").textContent = pet.description ||
     "Любит гулять и открывать новые места.";
   $("owner-bones").textContent = "🦴 Загружаем…";
@@ -555,105 +531,6 @@ function positionSample(position) {
 function currentPosition() {
   return locationSource.getPosition();
 }
-function drawRoute() {
-  routeLayer
-    .setStyle({ color: state.pet?.color || "#397C63" })
-    .setLatLngs(state.route.map((p) => [p.latitude, p.longitude]));
-  if (startMarker) {
-    map.removeLayer(startMarker);
-    startMarker = null;
-  }
-  if (state.route.length) {
-    startMarker = L.circleMarker(
-      [state.route[0].latitude, state.route[0].longitude],
-      {
-        radius: 7,
-        color: "#fff",
-        weight: 3,
-        fillColor: "#397C63",
-        fillOpacity: 1,
-      },
-    )
-      .bindTooltip("Старт")
-      .addTo(map);
-  }
-  render();
-}
-// Локальный демо-маршрут не использует GPS и не попадает в общую карту.
-function stopWalk() {
-  state.walk = null;
-  state.route = [];
-  state.latest = null;
-  drawRoute();
-}
-function demoStep() {
-  if (!state.config.demoMode || !state.pet || state.busy) return;
-  if (!state.walk) {
-    state.walk = { demo: true };
-    state.route = [];
-    state.latest = null;
-    map.setView([54.7104, 20.4522], 16);
-  }
-  if (!state.walk.demo || state.route.length >= state.config.demoRoute.length) {
-    return;
-  }
-  const [longitude, latitude] = state.config.demoRoute[state.route.length];
-  const p = { longitude, latitude, accuracy: 3, timestamp: Date.now() / 1000 };
-  state.route.push(p);
-  state.latest = p;
-  message(
-    state.route.length === state.config.demoRoute.length
-      ? "Демоконтур замкнут. Нажмите «Захватить демоучасток»."
-      : "Нажимайте «Следующая точка», чтобы обойти демонстрационный участок.",
-  );
-  drawRoute();
-}
-async function capture() {
-  if (state.busy || !state.walk?.demo || !client.isDemo) return;
-  const walk = state.walk;
-  busy(true);
-  try {
-    const result = await api("/api/demo/capture", { method: "POST" });
-    stopWalk();
-    // Захват уже сохранён. Ошибка обновления карты не должна выглядеть как отказ захвата.
-    message(
-      `Территория ваша! Захвачено ${
-        Math.round(result.area)
-      } м². Нажмите на фото владельца на карте.`,
-    );
-    telegram?.HapticFeedback?.notificationOccurred("success");
-    try {
-      await refreshMe();
-      await refreshMap();
-      void refreshWallet();
-    } catch {
-      message(
-        `Захват ${
-          Math.round(result.area)
-        } м² сохранён, но карта не обновилась. Перезапустите приложение.`,
-      );
-    }
-  } catch (error) {
-    if (error.annulled) {
-      stopWalk();
-      telegram?.HapticFeedback?.notificationOccurred("error");
-    }
-    message(error.message);
-  } finally {
-    busy(false);
-  }
-}
-
-$("capture-button").addEventListener("click", capture);
-$("demo-button").addEventListener("click", demoStep);
-$("cancel-button").addEventListener("click", () => {
-  if (
-    window.confirm("Отменить прогулку? Незахваченный маршрут будет удалён.")
-  ) {
-    stopWalk();
-    message("Прогулка отменена.");
-  }
-});
 $("profile-button").addEventListener("click", editProfile);
 $("close-profile").addEventListener("click", () => $("profile-dialog").close());
 $("close-owner").addEventListener("click", () => $("owner-dialog").close());
@@ -702,6 +579,7 @@ async function refreshWallet() {
   try {
     const w = await api("/api/wallet");
     setBonesText($("wallet-balance"), w.balance, "", " 🦴");
+    headquarters?.walletChanged();
     if (w.incomePeriodSeconds === 86400) {
       $("wallet-rate").textContent = `${formatDailyRate(w.rate)} 🦴/сутки`;
       $("wallet-rate").title = "Доход за полные сутки при текущей площади";
@@ -725,7 +603,7 @@ createChat({ api, context: () => state, message });
 let liveLoading = false, liveFittedId = null, shownAnnulment = null;
 async function refreshLive() {
   if (
-    !state.connected || client.isDemo ||
+    !state.connected ||
     !state.config?.features?.liveTracking || liveLoading
   ) return;
   liveLoading = true;
@@ -835,7 +713,7 @@ setInterval(() => {
 let rankingRequest = 0;
 async function loadTop(sort = "bones") {
   if (!state.connected) {
-    message("Откройте приложение через бота или включите демо.");
+    message("Откройте приложение через кнопку карты в Telegram-боте.");
     return;
   }
   if (!$("top-dialog").open) $("top-dialog").showModal();

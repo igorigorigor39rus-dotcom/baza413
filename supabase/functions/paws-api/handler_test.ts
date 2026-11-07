@@ -65,6 +65,8 @@ function fixture(
               liveOnly: true,
               captureHelp: true,
               extraCamouflage: true,
+              breeds: true,
+              headquarters: true,
               dailyIncome: true,
               incomePeriodSeconds: 86400,
               sqmPerBone: 10,
@@ -419,7 +421,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "0.9.0" && config.features.chat === false &&
+    config.version === "1.0.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -1077,4 +1079,69 @@ Deno.test("v09: три дополнительных камуфляжа прох�
       JSON.parse(String(f.calls.at(-1)!.options.body)).p_pattern === pattern,
     );
   }
+});
+
+Deno.test("v10: HQ uses signed owner and rejects client prices and invalid levels before RPC", async () => {
+  const f = fixture();
+  assert((await f.handler(await request("/api/hq"))).status === 200);
+  assert(JSON.parse(String(f.calls[0].options.body)).p_user === 42);
+  const id = "00000000-0000-0000-0000-000000000010";
+  assert(
+    (await f.handler(
+      await request("/api/hq/upgrade", "POST", {
+        requestId: id,
+        expectedLevel: 1,
+      }),
+    )).status === 200,
+  );
+  const args = JSON.parse(String(f.calls.at(-1)!.options.body));
+  assert(args.p_user === 42 && args.p_level === 1 && args.p_request === id);
+  const count = f.calls.length;
+  for (
+    const body of [
+      { requestId: id, expectedLevel: 1, cost: 1 },
+      { requestId: id, expectedLevel: 1, owner_id: 99 },
+      { requestId: id, expectedLevel: 1.5 },
+      { requestId: "bad", expectedLevel: 1 },
+    ]
+  ) {
+    assert(
+      (await f.handler(await request("/api/hq/upgrade", "POST", body)))
+        .status === 422,
+    );
+  }
+  assert(f.calls.length === count);
+});
+Deno.test("v10: breed and dossier saved with one RPC and verified identity", async () => {
+  const f = fixture();
+  const response = await f.handler(
+    await request("/api/me", "PUT", {
+      name: "Луна",
+      age: 2,
+      description: "",
+      color: "#397c63",
+      hue: 150,
+      saturation: 55,
+      opacity: .35,
+      pattern: "solid",
+      breedId: "mixed",
+      breedCustom: null,
+    }),
+  );
+  assert(
+    response.status === 200 && f.calls.length === 1 &&
+      f.calls[0].url.endsWith("/paws_save_general"),
+  );
+  const args = JSON.parse(String(f.calls[0].options.body));
+  assert(args.p_user === 42 && args.p_breed === "mixed");
+  const invalid = await f.handler(
+    await request("/api/me", "PUT", {
+      name: "Луна",
+      age: 2,
+      description: "",
+      color: "#397c63",
+      breedId: "mixed",
+    }),
+  );
+  assert(invalid.status === 422 && f.calls.length === 1);
 });

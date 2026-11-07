@@ -108,7 +108,7 @@ export function createChat({ api, context, message }) {
   }
   $("open-chat").addEventListener("click", () => {
     if (!context().connected) {
-      message("Откройте приложение через бота или включите демо.");
+      message("Откройте приложение через кнопку карты в Telegram-боте.");
       return;
     }
     if (!context().pet) channel = "world";
