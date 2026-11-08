@@ -2033,3 +2033,88 @@ body.hq-is-open {
 #account-share input {
   font-size: 12px;
 }
+
+.danger-button {
+  width: 100%;
+  border: 2px solid #9d7279;
+  background: #653b46;
+  color: #fff0f1;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 12px;
+  font-weight: bold;
+  box-shadow: 3px 4px 0 #141820;
+}
+.danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.delete-ack {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  line-height: 1.5;
+}
+.delete-ack input {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin-top: 2px;
+}
+#delete-pet-dialog {
+  max-width: 460px;
+}
+#delete-pet-form .secondary {
+  margin-top: 12px;
+}
+
+/* Движение начинается автоматически. В системном режиме уменьшения
+   движения остаётся только мягкое дыхание, без раскачивания и прыжков. */
+.hq-room {
+  object-fit: cover;
+  object-position: center;
+}
+.hq-pet {
+  cursor: pointer;
+}
+.hq-pet.is-animated {
+  animation: hq-pet-breathe 2.8s ease-in-out infinite;
+}
+@keyframes hq-pet-breathe {
+  0%, 100% {
+    transform: translateX(-50%) scaleY(1) rotate(-0.8deg);
+  }
+  50% {
+    transform: translateX(-50%) scaleY(1.035) rotate(0.8deg);
+  }
+}
+@keyframes hq-pet-breathe-reduced {
+  0%, 100% {
+    transform: translateX(-50%) scaleY(1);
+  }
+  50% {
+    transform: translateX(-50%) scaleY(1.02);
+  }
+}
+@keyframes hq-pet-pat {
+  0%, 100% {
+    transform: translateX(-50%) translateY(0) rotate(0);
+  }
+  30% {
+    transform: translateX(-50%) translateY(-18px) rotate(-3deg);
+  }
+  65% {
+    transform: translateX(-50%) translateY(-5px) rotate(2deg);
+  }
+}
+.hq-pet.is-petted {
+  animation: hq-pet-pat 0.7s ease-out;
+}
+.hq-top > div:last-child {
+  gap: 10px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hq-pet.is-animated {
+    animation: hq-pet-breathe-reduced 3.6s ease-in-out infinite;
+  }
+}

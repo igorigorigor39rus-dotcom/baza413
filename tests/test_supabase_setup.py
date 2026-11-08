@@ -17,7 +17,7 @@ class SupabaseSetupTests(unittest.TestCase):
         def request(url,body=None,headers=None):
             calls.append((url,body,headers))
             if url.endswith('/health'): return {'ok':True}
-            if url.endswith('/api/config'): return {'appUrl':setup.APP_URL,'features':{'liveTracking':True,'autoLiveStart':True,'starShop':True,'reminders':True,'largestTerritory':True,'dailyIncome':True,'geoChat':True,'breeds':True,'headquarters':True,'sharedPet':True,'unlimitedGpsGap':True}}
+            if url.endswith('/api/config'): return {'appUrl':setup.APP_URL,'features':{'liveTracking':True,'autoLiveStart':True,'starShop':True,'reminders':True,'largestTerritory':True,'dailyIncome':True,'geoChat':True,'breeds':True,'headquarters':True,'sharedPet':True,'unlimitedGpsGap':True,'deletePet':True}}
             if url.endswith('/getMe'): return {'ok':True,'result':{'id':42,'username':'paws_test_bot'}}
             if 'api.telegram.org' in url: return {'ok':True,'result':True}
             return {'ok':True}
@@ -38,7 +38,7 @@ class SupabaseSetupTests(unittest.TestCase):
         def request(url,body=None,headers=None):
             calls.append(url)
             if url.endswith('/health'): return {'ok':True}
-            if url.endswith('/api/config'): return {'appUrl':setup.APP_URL,'features':{'liveTracking':True,'autoLiveStart':True,'starShop':True,'reminders':True,'largestTerritory':True,'dailyIncome':True,'geoChat':True,'breeds':True,'headquarters':True,'sharedPet':True,'unlimitedGpsGap':True}}
+            if url.endswith('/api/config'): return {'appUrl':setup.APP_URL,'features':{'liveTracking':True,'autoLiveStart':True,'starShop':True,'reminders':True,'largestTerritory':True,'dailyIncome':True,'geoChat':True,'breeds':True,'headquarters':True,'sharedPet':True,'unlimitedGpsGap':True,'deletePet':True}}
             if url.endswith('/webhook'): raise RuntimeError('HTTP 401')
             raise AssertionError('Unexpected request')
         with patch.object(setup,'urlopen',return_value=self.pages()),patch.object(setup,'getpass',side_effect=['test-token','private_webhook_secret_at_least_32_chars']),patch.object(setup,'request',side_effect=request),redirect_stdout(StringIO()):

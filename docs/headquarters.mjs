@@ -1,14 +1,19 @@
-import { headquartersPet } from "./hq-pet.mjs?v=1.1.0";
-import { formatBones, fullBones } from "./numbers.mjs?v=1.1.0";
-// Атлас остаётся одним изображением. ViewBox показывает отдельную комнату,
-// персонаж и эффекты анимируются поверх неё как независимые 2D-слои.
-const ART = new URL("./assets/hq/bunker-atlas.webp?v=1.1.0", import.meta.url).href;
-const ROOMS = Array.from({ length: 10 }, (_, i) => [
-  2 + (i % 2) * 529,
-  2 + Math.floor(i / 2) * 297.4,
-  525,
-  293.4,
-]);
+import { headquartersPet } from "./hq-pet.mjs?v=1.1.1";
+import { formatBones, fullBones } from "./numbers.mjs?v=1.1.1";
+// Фон, персонаж и свет остаются независимыми слоями сцены.
+// Каждый уровень — отдельный большой фон, без увеличения миниатюры атласа.
+const ROOMS = [
+  "./assets/hq/level-01.webp?v=1.1.1",
+  "./assets/hq/level-02.webp?v=1.1.1",
+  "./assets/hq/level-03.webp?v=1.1.1",
+  "./assets/hq/level-04.webp?v=1.1.1",
+  "./assets/hq/level-05.webp?v=1.1.1",
+  "./assets/hq/level-06.webp?v=1.1.1",
+  "./assets/hq/level-07.webp?v=1.1.1",
+  "./assets/hq/level-08.webp?v=1.1.1",
+  "./assets/hq/level-09.webp?v=1.1.1",
+  "./assets/hq/level-10.webp?v=1.1.1",
+].map((path) => new URL(path, import.meta.url).href);
 const NAMES = [
   "Бетонный угол",
   "Первые удобства",
@@ -33,6 +38,7 @@ export function createHeadquarters(
     ownTelegramFullscreen = false;
   const back = telegram?.BackButton;
   let backWasVisible = false;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   async function enterNative() {
     try {
       if (telegram?.isVersionAtLeast?.("8.0") && !telegram.isFullscreen) {
@@ -85,30 +91,33 @@ export function createHeadquarters(
       `${level}:${context().pet?.breedId}:${context().pet?.breedName}`;
     if (key === sceneKey) return;
     sceneKey = key;
-    const ns = "http://www.w3.org/2000/svg",
-      svg = document.createElementNS(ns, "svg");
-    svg.classList.add("hq-room");
-    svg.setAttribute("viewBox", ROOMS[level - 1].join(" "));
-    svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", `Штаб ${level} уровня: ${NAMES[level - 1]}`);
-    const image = document.createElementNS(ns, "image");
-    image.setAttribute("href", ART);
-    image.setAttribute("width", "1058");
-    image.setAttribute("height", "1487");
-    // Отсекаем соседние комнаты, в том числе при несовпадении пропорций окна.
-    const clip = document.createElementNS(ns, "clipPath");
-    clip.id = "hq-room-clip";
-    const rect = document.createElementNS(ns, "rect");
-    ["x", "y", "width", "height"].forEach((name, i) =>
-      rect.setAttribute(name, ROOMS[level - 1][i])
-    );
-    clip.append(rect);
-    image.setAttribute("clip-path", "url(#hq-room-clip)");
-    svg.append(clip, image);
-    $("hq-scene").replaceChildren(svg);
+    const image = document.createElement("img");
+    image.className = "hq-room";
+    image.alt = `Штаб ${level} уровня: ${NAMES[level - 1]}`;
+    image.src = ROOMS[level - 1];
+    image.decoding = "async";
+    $("hq-scene").replaceChildren(image);
     const dog = headquartersPet(context().pet);
     dog.classList.add("hq-pet");
+    dog.setAttribute("role", "button");
+    dog.setAttribute("tabindex", "0");
+    dog.setAttribute("aria-label", "Погладить питомца");
+    const pat = () => {
+      if (reducedMotion.matches) return;
+      dog.classList.remove("is-petted");
+      void dog.getBoundingClientRect();
+      dog.classList.add("is-petted");
+    };
+    dog.addEventListener("click", pat);
+    dog.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        pat();
+      }
+    });
+    dog.addEventListener("animationend", (e) => {
+      if (e.animationName === "hq-pet-pat") dog.classList.remove("is-petted");
+    });
     $("hq-scene").append(dog);
     if (level >= 4) {
       const glow = document.createElement("div");

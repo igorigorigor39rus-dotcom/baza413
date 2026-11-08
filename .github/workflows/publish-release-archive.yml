@@ -1,12 +1,10 @@
-name: Publish v1.1 update archive
+name: Publish update archive
 
-# Этот запуск нужен, когда облачное соединение не может загрузить файл
-# на uploads.github.com. Архив собирает GitHub из уже проверенного тега;
-# дополнительный личный токен или секрет пользователя не нужен.
+# Публикация тега собирает компактный архив из того же проверенного коммита.
+# Файл загружает GitHub: личный токен пользователя не нужен.
 on:
   push:
-    branches: [prototype]
-    paths: [.github/workflows/publish-release-archive.yml]
+    tags: ['v.*']
 
 permissions:
   contents: write
@@ -15,36 +13,44 @@ jobs:
   archive:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v.1.1
           persist-credentials: false
       - name: Build and verify update archive
         run: |
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
-          import subprocess
+          import subprocess, os, re
+          tag = os.environ['RELEASE_TAG']
+          version = Path('VERSION').read_text().strip()
+          assert re.fullmatch(r'v\.\d+\.\d+(?:\.\d+)?', tag)
+          assert tag == 'v.' + (version[:-2] if version.endswith('.0') else version)
           paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
-          target = '/tmp/baza413-v.1.1.zip'
+          prefix = 'baza413-' + tag
+          target = '/tmp/' + prefix + '.zip'
           with ZipFile(target, 'w', ZIP_DEFLATED, compresslevel=6) as archive:
               for name in sorted(filter(None, paths)):
                   path = Path(name)
-                  if path.parts[0] == 'design' and path.suffix == '.png':
+                  if path.parts[0] == 'design' and path.suffix.lower() in {'.png', '.webm', '.mp4'}:
                       continue
                   assert path.name == '.env.example' or not path.name.startswith('.env')
-                  archive.write(path, 'baza413-v.1.1/' + name)
-              archive.writestr('baza413-v.1.1/ARCHIVE_INFO.txt',
-                  'Update archive: all application files included. Original illustration PNGs are available in the full GitHub Source code ZIP.\n')
+                  archive.write(path, prefix + '/' + name)
+              archive.writestr(prefix + '/ARCHIVE_INFO.txt',
+                  'All application files included. Original illustration PNGs are available in the full GitHub Source code ZIP.\n')
           with ZipFile(target) as archive:
               assert archive.testzip() is None
-              assert archive.read('baza413-v.1.1/VERSION').strip() == b'1.1.0'
-              for name in ['supabase/migrations/202611080001_v11.sql',
+              assert archive.read(prefix + '/VERSION').decode().strip() == version
+              for name in ['supabase/migrations/202611080002_v111.sql',
                            'supabase/functions/paws-api/accounts.ts',
-                           'docs/hq-pet.mjs', 'docs/accounts.mjs',
-                           'docs/assets/pets/dogs-e.webp']:
-                  assert 'baza413-v.1.1/' + name in archive.namelist()
+                           'docs/pet-deletion.mjs', 'docs/headquarters.mjs',
+                           'docs/assets/hq/level-10.webp']:
+                  assert prefix + '/' + name in archive.namelist()
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('ARCHIVE_PATH=' + target + '\n')
           print('Verified archive bytes:', Path(target).stat().st_size)
           PY
       - name: Upload archive and publish release
@@ -52,5 +58,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload v.1.1 /tmp/baza413-v.1.1.zip --clobber
-          gh release edit v.1.1 --draft=false --latest
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "DogWars $RELEASE_TAG" --notes-file guide/RELEASE_NOTES.md
+          fi
+          gh release upload "$RELEASE_TAG" "$ARCHIVE_PATH" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

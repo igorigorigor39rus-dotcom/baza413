@@ -52,8 +52,8 @@ def main():
     if not request(api+'/health').get('ok'):
         raise RuntimeError('Supabase ещё не готов.')
     config=request(api+'/api/config')
-    if not all(config.get('features',{}).get(key) for key in ('autoLiveStart','starShop','reminders','largestTerritory','dailyIncome','geoChat','breeds','headquarters','sharedPet','unlimitedGpsGap')):
-        raise RuntimeError('Сначала установите SQL и Edge Function v.1.1 по README; нужны общий питомец и новое правило GPS.')
+    if not all(config.get('features',{}).get(key) for key in ('autoLiveStart','starShop','reminders','largestTerritory','dailyIncome','geoChat','breeds','headquarters','sharedPet','unlimitedGpsGap','deletePet')):
+        raise RuntimeError('Сначала установите SQL и Edge Function v.1.1.1 по README; нужны общий питомец и новое правило GPS.')
     if config.get('appUrl') != APP_URL:
         raise RuntimeError('В APP_URL в Supabase должен быть адрес из README, включая /baza413/ в конце.')
     # Пустой update проверяет секрет, но не отправляет сообщений.

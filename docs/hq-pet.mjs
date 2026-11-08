@@ -1,11 +1,11 @@
-import { BREED_SPRITE_IDS } from "./hq-breed-map.mjs?v=1.1.0";
+import { BREED_SPRITE_IDS } from "./hq-breed-map.mjs?v=1.1.1";
 // Персонажи штаба — отдельные прозрачные иллюстрации. Иконки в поиске пород
 // остаются в dog.mjs. Здесь выбирается рисунок, а CSS даёт лёгкое дыхание.
-const ATLAS_A = new URL("./assets/pets/dogs-a.webp?v=1.1.0", import.meta.url).href;
-const ATLAS_C = new URL("./assets/pets/dogs-c.webp?v=1.1.0", import.meta.url).href;
-const ATLAS_D = new URL("./assets/pets/dogs-d.webp?v=1.1.0", import.meta.url).href;
-const ATLAS_E = new URL("./assets/pets/dogs-e.webp?v=1.1.0", import.meta.url).href;
-const ATLAS_B = new URL("./assets/pets/dogs-b.webp?v=1.1.0", import.meta.url).href;
+const ATLAS_A = new URL("./assets/pets/dogs-a.webp?v=1.1.1", import.meta.url).href;
+const ATLAS_C = new URL("./assets/pets/dogs-c.webp?v=1.1.1", import.meta.url).href;
+const ATLAS_D = new URL("./assets/pets/dogs-d.webp?v=1.1.1", import.meta.url).href;
+const ATLAS_E = new URL("./assets/pets/dogs-e.webp?v=1.1.1", import.meta.url).href;
+const ATLAS_B = new URL("./assets/pets/dogs-b.webp?v=1.1.1", import.meta.url).href;
 export const BREED_SPRITES = [
   ["bernese", "бернск|bernese", 0],
   ["german", "немецк.*овчарк|german shepherd", 1],

@@ -78,6 +78,8 @@ function fixture(
               extraCamouflage: true,
               breeds: true,
               headquarters: true,
+              deletePet: true,
+              highQualityHQ: true,
               sharedPet: true,
               unlimitedGpsGap: true,
               landscapeHQ: true,
@@ -106,6 +108,11 @@ async function request(
   body?: unknown,
   headers: Record<string, string> = {},
 ) {
+  if (
+    path === "/api/me" && method === "PUT" && body &&
+    typeof body === "object" && !Array.isArray(body) &&
+    !Object.hasOwn(body, "profileId")
+  ) body = { ...body, profileId: null };
   return new Request(`${BASE}/functions/v1/paws-api${path}`, {
     method,
     headers: {
@@ -397,7 +404,7 @@ Deno.test("досье: новые поля передаются в отдель�
     pattern: "camo",
   };
   assert((await handler(await request("/api/me", "PUT", body))).status === 200);
-  assert(calls[0].url.endsWith("/rpc/paws_save_dossier"));
+  assert(calls[0].url.endsWith("/rpc/paws_save_profile"));
   assert(JSON.parse(String(calls[0].options.body)).p_user === 42);
   assert(
     (await handler(
@@ -435,7 +442,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "1.1.0" && config.features.chat === false &&
+    config.version === "1.1.1" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -1153,7 +1160,7 @@ Deno.test("v10: breed and dossier saved with one RPC and verified identity", asy
   );
   assert(
     response.status === 200 && f.calls.length === 1 &&
-      f.calls[0].url.endsWith("/paws_save_general"),
+      f.calls[0].url.endsWith("/paws_save_profile"),
   );
   const args = JSON.parse(String(f.calls[0].options.body));
   assert(args.p_user === 42 && args.p_breed === "mixed");
@@ -1195,4 +1202,163 @@ Deno.test("v11: shared profile/HQ use owner, live capture and account controls p
     )).status === 200,
   );
   assert(JSON.parse(String(f.calls.at(-1)!.options.body)).p_user === 88);
+});
+
+Deno.test("v111: deletion requires UUIDs, exact confirmation and explicit acknowledgement before RPC", async () => {
+  const f = fixture();
+  const good = {
+    profileId: "11111111-1111-4111-8111-111111111111",
+    requestId: "22222222-2222-4222-8222-222222222222",
+    confirmation: "Рекс",
+    confirmed: true,
+  };
+  for (
+    const body of [
+      { ...good, confirmed: false },
+      { ...good, profileId: "42" },
+      { ...good, requestId: null },
+      { ...good, confirmation: "" },
+      { ...good, ownerId: 43 },
+    ]
+  ) {
+    assert(
+      (await f.handler(await request("/api/me", "DELETE", body))).status ===
+        422,
+    );
+  }
+  assert(f.calls.length === 0);
+});
+Deno.test("v111: deletion preserves signed actor even when it resolves to a shared pet", async () => {
+  const f = fixture(
+    () =>
+      Response.json({
+        code: "P0001",
+        message: "Удалить общую анкету может только основной аккаунт.",
+      }, { status: 400 }),
+    (id) => id === 88 ? 42 : id,
+  );
+  const response = await f.handler(
+    await request("/api/me", "DELETE", {
+      profileId: "11111111-1111-4111-8111-111111111111",
+      requestId: "22222222-2222-4222-8222-222222222222",
+      confirmation: "Рекс",
+      confirmed: true,
+    }, { Authorization: `tma ${await signed(88)}` }),
+  );
+  assert(response.status === 422 && f.calls.length === 1);
+  assert(
+    f.calls[0].url.endsWith("/paws_delete_pet") &&
+      JSON.parse(String(f.calls[0].options.body)).p_actor === 88,
+  );
+});
+Deno.test("v111: successful deletion cleans only the queued validated photo and acknowledges its lease", async () => {
+  const photo = "42/33333333-3333-4333-8333-333333333333.jpg",
+    lease = "44444444-4444-4444-8444-444444444444";
+  const f = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_delete_pet")
+        ? { deleted: true }
+        : url.endsWith("/paws_photo_cleanup_claim")
+        ? { photos: [{ key: photo, token: lease }] }
+        : {},
+    )
+  );
+  const body = {
+    profileId: "11111111-1111-4111-8111-111111111111",
+    requestId: "22222222-2222-4222-8222-222222222222",
+    confirmation: "Рекс",
+    confirmed: true,
+  };
+  assert(
+    (await f.handler(await request("/api/me", "DELETE", body))).status === 200,
+  );
+  const args = JSON.parse(String(f.calls[0].options.body));
+  assert(
+    args.p_actor === 42 && args.p_profile === body.profileId &&
+      args.p_request === body.requestId,
+  );
+  const storage = f.calls.find((c) =>
+    c.url.includes("/storage/v1/object/paws-photos")
+  )!;
+  assert(
+    storage.options.method === "DELETE" &&
+      JSON.parse(String(storage.options.body)).prefixes[0] === photo,
+  );
+  const finish = JSON.parse(String(f.calls.at(-1)!.options.body));
+  assert(
+    finish.p_key === photo && finish.p_token === lease && finish.p_ok === true,
+  );
+});
+Deno.test("v111: failed Storage cleanup never undoes profile deletion and remains retryable", async () => {
+  const photo = "42/33333333-3333-4333-8333-333333333333.jpg";
+  const f = fixture((url) =>
+    url.includes("/storage/v1/")
+      ? Response.json({ error: "unavailable" }, { status: 503 })
+      : Response.json(
+        url.endsWith("/paws_delete_pet")
+          ? { deleted: true }
+          : url.endsWith("/paws_photo_cleanup_claim")
+          ? {
+            photos: [{
+              key: photo,
+              token: "44444444-4444-4444-8444-444444444444",
+            }],
+          }
+          : {},
+      )
+  );
+  const response = await f.handler(
+    await request("/api/me", "DELETE", {
+      profileId: "11111111-1111-4111-8111-111111111111",
+      requestId: "22222222-2222-4222-8222-222222222222",
+      confirmation: "Рекс",
+      confirmed: true,
+    }),
+  );
+  assert(response.status === 200 && (await response.json()).deleted === true);
+  assert(JSON.parse(String(f.calls.at(-1)!.options.body)).p_ok === false);
+});
+Deno.test("v111: profile save requires generation and forwards it atomically", async () => {
+  const f = fixture();
+  const fields = { name: "Рекс", age: 3, description: "", color: "#397c63" };
+  assert(
+    (await f.handler(
+      await request("/api/me", "PUT", { ...fields, profileId: undefined }),
+    )).status === 422,
+  );
+  assert(f.calls.length === 0);
+  const id = "11111111-1111-4111-8111-111111111111";
+  assert(
+    (await f.handler(
+      await request("/api/me", "PUT", { ...fields, profileId: id }),
+    )).status === 200,
+  );
+  assert(
+    f.calls[0].url.endsWith("/paws_save_profile") &&
+      JSON.parse(String(f.calls[0].options.body)).p_profile === id,
+  );
+});
+Deno.test("v111: shared secondary may edit but is never offered deletion of the common profile", async () => {
+  const f = fixture(
+    () =>
+      Response.json({
+        pet: {
+          id: "42",
+          name: "Рекс",
+          profileId: "11111111-1111-4111-8111-111111111111",
+        },
+        area: 10,
+      }),
+    (id) => id === 88 ? 42 : id,
+  );
+  const response = await f.handler(
+    await request("/api/me", "GET", undefined, {
+      Authorization: `tma ${await signed(88)}`,
+    }),
+  );
+  const data = await response.json();
+  assert(
+    response.status === 200 && data.pet.id === "42" &&
+      data.canDeletePet === false,
+  );
 });

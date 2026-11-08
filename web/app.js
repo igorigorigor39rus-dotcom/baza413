@@ -1,3 +1,4 @@
+import { createPetDeletion } from "./pet-deletion.mjs";
 import { photoSize } from "./tracking.mjs";
 import { createLocationSource } from "./location.mjs";
 import { createPurchasing } from "./purchasing.mjs";
@@ -45,6 +46,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   config: null,
   pet: null,
+  canDeletePet: false,
   connected: false,
   busy: false,
   previewUrl: null,
@@ -60,7 +62,13 @@ let map,
 let purchasing;
 let fullscreen;
 let notifications;
-let shop, presence, ownerPet, focusedTerritory, headquarters, accounts;
+let shop,
+  presence,
+  ownerPet,
+  focusedTerritory,
+  headquarters,
+  accounts,
+  petDeletion;
 const breedPicker = createBreedPicker();
 const photoMarkers = [];
 function photoIcon(pet) {
@@ -123,6 +131,7 @@ function render() {
   shop?.render();
   presence?.render();
   headquarters?.render();
+  petDeletion?.render();
   $("show-my-territory").disabled = !state.pet ||
     !state.config?.features?.largestTerritory;
   $("show-owner-territory").disabled = !state.config?.features
@@ -219,6 +228,7 @@ function initMap() {
     message,
   });
   presence = createPresence({ api, context: () => state });
+  petDeletion = createPetDeletion({ api, context: () => state });
   accounts = createAccounts({ api, context: () => state });
   headquarters = createHeadquarters({
     api,
@@ -281,6 +291,7 @@ async function refreshMap() {
 async function refreshMe() {
   const data = await api("/api/me");
   state.pet = data.pet;
+  state.canDeletePet = data.canDeletePet === true;
   $("area-label").textContent = state.pet
     ? `${Math.round(data.area).toLocaleString("ru-RU")} м² ваших открытий`
     : "Открывайте новые места";
@@ -334,7 +345,16 @@ async function boot() {
         : "Обойдите участок и вернитесь к старту. Для записи маршрута включите трансляцию геопозиции в чате бота.",
     );
     render();
-    if (!state.pet) editProfile();
+    let justDeleted = false;
+    try {
+      justDeleted = sessionStorage.getItem("dogwars:pet-deleted") === "1";
+      sessionStorage.removeItem("dogwars:pet-deleted");
+    } catch {}
+    if (!state.pet && justDeleted) {
+      message(
+        "Анкета удалена. Теперь откройте ссылку-приглашение от основного аккаунта в боте. Новую анкету создавать не нужно.",
+      );
+    } else if (!state.pet) editProfile();
   } catch (error) {
     state.connected = false;
     message(error.message);
@@ -387,6 +407,9 @@ $("profile-form").addEventListener("submit", async (event) => {
       headers: json(),
       body: JSON.stringify({
         ...breedPicker.value(),
+        ...(state.config?.features?.deletePet
+          ? { profileId: state.pet?.profileId ?? null }
+          : {}),
         name: data.get("name"),
         age: Number(data.get("age")),
         description: data.get("description"),

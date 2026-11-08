@@ -252,6 +252,30 @@ export function createHandler(deps: Dependencies) {
       console.warn("Очистка аватара отложена.");
     }
   }
+  async function cleanupDeletedPhotos() {
+    const claimed = await rpc("paws_photo_cleanup_claim", { p_limit: 5 });
+    for (const photo of Array.isArray(claimed.photos) ? claimed.photos : []) {
+      if (
+        typeof photo.key !== "string" || !PHOTO.test(photo.key) ||
+        typeof photo.token !== "string" || !UUID.test(photo.token)
+      ) continue;
+      let ok = false;
+      try {
+        const result = await send(`${base}/storage/v1/object/paws-photos`, {
+          method: "DELETE",
+          headers: { ...adminHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({ prefixes: [photo.key] }),
+          signal: AbortSignal.timeout(10000),
+        });
+        ok = result.ok || result.status === 404;
+      } catch {}
+      await rpc("paws_photo_cleanup_finish", {
+        p_key: photo.key,
+        p_token: photo.token,
+        p_ok: ok,
+      });
+    }
+  }
   async function route(req: Request, path: string, url: URL) {
     if (path === "/internal/scheduler" && req.method === "POST") {
       const expected = env("SCHEDULER_SECRET") ?? "";
@@ -265,7 +289,11 @@ export function createHandler(deps: Dependencies) {
         )
       ) throw new ApiError(401, "Недействительный ключ планировщика.");
       const result = await rpc("paws_reminders_generate", {});
-      const task = Promise.all([engagement.deliver(), deliverNotifications({})])
+      const task = Promise.all([
+        engagement.deliver(),
+        deliverNotifications({}),
+        cleanupDeletedPhotos(),
+      ])
         .then(() => {}).catch(() => {});
       if (deps.defer) deps.defer(task);
       else await task;
@@ -513,7 +541,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "1.1.0",
+        version: "1.1.1",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -540,11 +568,11 @@ export function createHandler(deps: Dependencies) {
         !capabilities.liveOnly || !capabilities.captureHelp ||
         !capabilities.extraCamouflage || !capabilities.breeds ||
         !capabilities.headquarters || !capabilities.sharedPet ||
-        !capabilities.unlimitedGpsGap
+        !capabilities.unlimitedGpsGap || !capabilities.deletePet
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.1.1.");
+        throw new ApiError(503, "Установите полную миграцию v.1.1.1.");
       }
-      return { ok: true, version: "1.1.0" };
+      return { ok: true, version: "1.1.1" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -577,6 +605,28 @@ export function createHandler(deps: Dependencies) {
         actor,
         req.method === "POST" ? await jsonBody(req) : {},
       );
+    }
+    if (path === "/api/me" && req.method === "DELETE") {
+      const b = await jsonBody(req);
+      if (
+        typeof b.profileId !== "string" || !UUID.test(b.profileId) ||
+        typeof b.requestId !== "string" || !UUID.test(b.requestId) ||
+        typeof b.confirmation !== "string" || !b.confirmation.trim() ||
+        b.confirmation.length > 40 || b.confirmed !== true ||
+        Object.keys(b).some((k) =>
+          !["profileId", "requestId", "confirmation", "confirmed"].includes(k)
+        )
+      ) throw new ApiError(422, "Подтвердите удаление точной кличкой питомца.");
+      const result = await rpc("paws_delete_pet", {
+        p_actor: actor,
+        p_profile: b.profileId,
+        p_name: b.confirmation.trim(),
+        p_request: b.requestId,
+      });
+      const task = cleanupDeletedPhotos().catch(() => {});
+      if (deps.defer) deps.defer(task);
+      else await task;
+      return result;
     }
     const user = await accounts.resolve(actor);
     if (path === "/api/activity" && req.method === "POST") {
@@ -700,7 +750,11 @@ export function createHandler(deps: Dependencies) {
       return await rpc("paws_live_cancel", { p_user: user });
     }
     if (path === "/api/me" && req.method === "GET") {
-      return profile(await rpc("paws_me", { p_user: user }));
+      if (deps.defer) deps.defer(cleanupDeletedPhotos().catch(() => {}));
+      return {
+        ...profile(await rpc("paws_me", { p_user: user })),
+        canDeletePet: user === actor,
+      };
     }
     if (path === "/api/me" && req.method === "PUT") {
       const b = await jsonBody(req);
@@ -717,6 +771,7 @@ export function createHandler(deps: Dependencies) {
             "pattern",
             "breedId",
             "breedCustom",
+            "profileId",
           ].includes(k)
         )
       ) throw new ApiError(422, "Лишнее поле профиля.");
@@ -726,6 +781,16 @@ export function createHandler(deps: Dependencies) {
         b.description.length > 400 || typeof b.color !== "string" ||
         !/^#[0-9a-f]{6}$/i.test(b.color)
       ) throw new ApiError(422, "Проверьте кличку, описание и цвет питомца.");
+      if (
+        !Object.hasOwn(b, "profileId") ||
+        !(b.profileId === null ||
+          typeof b.profileId === "string" && UUID.test(b.profileId))
+      ) {
+        throw new ApiError(
+          422,
+          "Закройте приложение и откройте заново перед сохранением анкеты.",
+        );
+      }
       if (b.hue !== undefined) {
         const hue = number(b.hue, 0, 359),
           saturation = number(b.saturation, 20, 100),
@@ -744,9 +809,10 @@ export function createHandler(deps: Dependencies) {
         ) throw new ApiError(422, "Проверьте породу питомца.");
         return profile(
           await rpc(
-            b.breedId === undefined ? "paws_save_dossier" : "paws_save_general",
+            "paws_save_profile",
             {
               p_user: user,
+              p_profile: b.profileId,
               p_name: b.name.trim(),
               p_age: number(b.age, 0, 35),
               p_description: b.description.trim(),
@@ -769,8 +835,9 @@ export function createHandler(deps: Dependencies) {
         throw new ApiError(422, "Выберите породу и стиль заливки в досье.");
       }
       return profile(
-        await rpc("paws_save_pet", {
+        await rpc("paws_save_profile", {
           p_user: user,
+          p_profile: b.profileId,
           p_name: b.name.trim(),
           p_age: number(b.age, 0, 35),
           p_description: b.description.trim(),

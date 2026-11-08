@@ -88,10 +88,10 @@
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V1_1.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V1_1_1.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.1.1</a>
+        >Инструкция v.1.1.1</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -206,6 +206,42 @@
       </section>
       <footer>Собираем впечатления, а не километры <span>✦</span></footer>
     </main>
+    <dialog id="delete-pet-dialog" aria-labelledby="delete-pet-title">
+      <form id="delete-pet-form">
+        <h2 id="delete-pet-title">Удалить анкету питомца?</h2>
+        <p>
+          Удалятся анкета, фото, все территории, 🦴, прогресс штаба и сообщения
+          питомца в чате. Второй аккаунт будет отвязан.
+        </p>
+        <p class="hint">
+          История оплат Stars сохранится. Автоматического возврата Stars не
+          будет. После удаления этот Telegram-аккаунт можно привязать к другому
+          питомцу.
+        </p>
+        <label><span id="delete-pet-label"></span><input
+            id="delete-pet-name"
+            maxlength="40"
+            autocomplete="off"
+            required
+          ></label>
+        <label class="delete-ack"><input
+            id="delete-pet-ack"
+            type="checkbox"
+          >Понимаю, что восстановить данные нельзя</label>
+        <p id="delete-pet-error" class="error" role="alert"></p>
+        <button
+          id="confirm-delete-pet"
+          type="submit"
+          class="danger-button"
+          disabled
+        >
+          Удалить навсегда
+        </button>
+        <button id="cancel-delete-pet" type="button" class="secondary">
+          Отмена
+        </button>
+      </form>
+    </dialog>
     <dialog id="hq-dialog" aria-labelledby="hq-title">
       <div class="hq-landscape">
         <div id="hq-scene" class="hq-scene"></div>
@@ -217,6 +253,7 @@
           </div>
           <div>
             <p id="hq-balance"></p>
+
             <button
               id="close-hq"
               class="close-button"
@@ -479,6 +516,9 @@
         </button>
         <button type="button" id="show-my-territory" class="secondary">
           Показать территорию
+        </button>
+        <button type="button" id="delete-pet" class="danger-button" hidden>
+          Удалить анкету питомца
         </button>
         <p id="profile-territory-status" role="status"></p>
         <fieldset id="reminders-settings" hidden>
