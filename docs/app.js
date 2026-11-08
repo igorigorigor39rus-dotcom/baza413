@@ -1,24 +1,25 @@
-import { photoSize } from "./tracking.mjs?v=1.0.0";
-import { createLocationSource } from "./location.mjs?v=1.0.0";
-import { createPurchasing } from "./purchasing.mjs?v=1.0.0";
-import { createBreedPicker } from "./breeds.mjs?v=1.0.0";
-import { dogPortrait } from "./dog.mjs?v=1.0.0";
-import { createHeadquarters } from "./headquarters.mjs?v=1.0.0";
-import { createChat } from "./chat.mjs?v=1.0.0";
-import { formatDailyRate, payoutText } from "./income.mjs?v=1.0.0";
-import { createShop } from "./shop.mjs?v=1.0.0";
-import { createPresence } from "./presence.mjs?v=1.0.0";
-import { createMapFullscreen } from "./fullscreen.mjs?v=1.0.0";
-import { createNotifications } from "./notifications.mjs?v=1.0.0";
-import { setBonesText } from "./numbers.mjs?v=1.0.0";
-import { createClient } from "./client.mjs?v=1.0.0";
+import { photoSize } from "./tracking.mjs?v=1.1.0";
+import { createLocationSource } from "./location.mjs?v=1.1.0";
+import { createPurchasing } from "./purchasing.mjs?v=1.1.0";
+import { createBreedPicker } from "./breeds.mjs?v=1.1.0";
+import { dogPortrait } from "./dog.mjs?v=1.1.0";
+import { createAccounts } from "./accounts.mjs?v=1.1.0";
+import { createHeadquarters } from "./headquarters.mjs?v=1.1.0";
+import { createChat } from "./chat.mjs?v=1.1.0";
+import { formatDailyRate, payoutText } from "./income.mjs?v=1.1.0";
+import { createShop } from "./shop.mjs?v=1.1.0";
+import { createPresence } from "./presence.mjs?v=1.1.0";
+import { createMapFullscreen } from "./fullscreen.mjs?v=1.1.0";
+import { createNotifications } from "./notifications.mjs?v=1.1.0";
+import { setBonesText } from "./numbers.mjs?v=1.1.0";
+import { createClient } from "./client.mjs?v=1.1.0";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=1.0.0";
-import { compressPhoto } from "./photo.mjs?v=1.0.0";
+} from "./appearance.mjs?v=1.1.0";
+import { compressPhoto } from "./photo.mjs?v=1.1.0";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -32,7 +33,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=1.0.0", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=1.1.0", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -59,7 +60,7 @@ let map,
 let purchasing;
 let fullscreen;
 let notifications;
-let shop, presence, ownerPet, focusedTerritory, headquarters;
+let shop, presence, ownerPet, focusedTerritory, headquarters, accounts;
 const breedPicker = createBreedPicker();
 const photoMarkers = [];
 function photoIcon(pet) {
@@ -108,10 +109,11 @@ function render() {
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
     !liveLast || Date.now() / 1000 - liveLast.timestamp > 15 ||
-    state.live.points.length < 4;
+    state.live.points.length < 4 || state.live.trackingByMe === false;
   $("live-cancel").disabled = state.busy;
   $("profile-button").disabled = Boolean(state.live) || !state.connected ||
     state.busy;
+  $("profile-open").disabled = $("profile-button").disabled;
   $("walk-title").textContent = state.pet
     ? `На прогулку, ${state.pet.name}?`
     : "Откроем личное дело?";
@@ -217,11 +219,13 @@ function initMap() {
     message,
   });
   presence = createPresence({ api, context: () => state });
+  accounts = createAccounts({ api, context: () => state });
   headquarters = createHeadquarters({
     api,
     context: () => state,
     onWallet: refreshWallet,
     onProfile: editProfile,
+    telegram,
   });
   map.on("dragstart", () => {
     if (focusedTerritory) {
@@ -341,6 +345,7 @@ async function boot() {
 function editProfile() {
   if (state.busy || !state.connected) return;
   const p = state.pet;
+  void accounts?.refresh();
   breedPicker.set(p);
   $("pet-name").value = p?.name || "";
   $("pet-age").value = p?.age ?? "";
@@ -630,6 +635,9 @@ async function refreshLive() {
         });
       }
       $("live-status").textContent = state.live.error ||
+        (state.live.trackingByMe === false
+          ? "Прогулка идёт с другого аккаунта. Завершить её можно только там, где началась трансляция."
+          : "") ||
         (!last
           ? `Ждём трансляцию геопозиции с точностью ≤${maxAccuracy()} м.`
           : `Принято точек: ${points.length}. GPS ±${
@@ -797,3 +805,5 @@ function fitChat() {
 }
 window.visualViewport?.addEventListener("resize", fitChat);
 $("open-chat").addEventListener("click", fitChat);
+
+$("profile-open").addEventListener("click", editProfile);

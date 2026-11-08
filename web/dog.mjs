@@ -18,7 +18,7 @@ const TYPES = {
 };
 export function dogPortrait(
   breed = {},
-  { animated = false, helmet = true } = {},
+  { animated = false, helmet = false } = {},
 ) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 220 220");

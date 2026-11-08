@@ -1,5 +1,6 @@
 import { decode, encode } from "npm:jpeg-js@0.4.4";
 import { ApiError, equalSecret, verifyInitData } from "./auth.ts";
+import { createAccounts } from "./accounts.ts";
 import { createCommerce } from "./commerce.ts";
 import { createEngagement } from "./engagement.ts";
 
@@ -166,8 +167,25 @@ export function createHandler(deps: Dependencies) {
     if (!data.ok) throw new ApiError(503, "Telegram отклонил запрос бота.");
     return data.result;
   }
-  const commerce = createCommerce({ rpc, bot });
-  const engagement = createEngagement({ rpc, bot, appUrl });
+  const accounts = createAccounts({ rpc, bot });
+  async function accountRpc(name: string, args: Record<string, unknown>) {
+    return rpc(
+      name,
+      typeof args.p_user === "number" && args.p_user > 0
+        ? { ...args, p_user: await accounts.resolve(args.p_user) }
+        : args,
+    );
+  }
+  const commerce = createCommerce({
+    rpc: (name, args) =>
+      ["paws_activity", "paws_payment_support", "paws_star_catalog"].includes(
+          name,
+        )
+        ? accountRpc(name, args)
+        : rpc(name, args),
+    bot,
+  });
+  const engagement = createEngagement({ rpc: accountRpc, bot, appUrl });
   async function deliverNotifications(filters: Record<string, unknown>) {
     try {
       // Очередь остаётся в БД. Следующее обращение обработает оставшееся,
@@ -265,7 +283,10 @@ export function createHandler(deps: Dependencies) {
         )
       ) throw new ApiError(401, "Недействительный webhook.");
       const update = await jsonBody(req);
-      if (await commerce.webhook(update) || await engagement.webhook(update)) {
+      if (
+        await accounts.webhook(update) || await commerce.webhook(update) ||
+        await engagement.webhook(update)
+      ) {
         return { ok: true };
       }
       let m = (update.message ?? update.edited_message) as
@@ -317,8 +338,8 @@ export function createHandler(deps: Dependencies) {
           ) {
             throw new ApiError(422, "Некорректное обновление.");
           }
-          const result = await rpc("paws_live_receive", {
-            p_user: id,
+          const result = await rpc("paws_live_receive_shared", {
+            p_actor: id,
             p_message: message,
             p_update: updateId,
             p_timestamp: number(m?.edit_date ?? m?.date, 0, 1e12),
@@ -338,10 +359,13 @@ export function createHandler(deps: Dependencies) {
             await bot("sendMessage", {
               chat_id: id,
               text:
-                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м, дождитесь свежей точки GPS и нажмите «Захватить». Пересечения трека разрешены. При пропусках координат захват отклоняется.",
+                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м, дождитесь свежей точки GPS и нажмите «Захватить». Пересечения трека разрешены. Одновременно у питомца может идти только одна трансляция.",
               reply_markup: walkButtons,
             });
-          } else if (result.reason === "gap") {
+          } else if (
+            result.reason === "gap" ||
+            (!update.edited_message && result.reason === "other_account")
+          ) {
             await bot("sendMessage", { chat_id: id, text: result.message });
           } else if (!update.edited_message && result.reason === "accuracy") {
             await bot("sendMessage", {
@@ -402,7 +426,9 @@ export function createHandler(deps: Dependencies) {
       if (["/capture", "/cancel", "/status"].includes(command)) {
         try {
           if (command === "/capture") {
-            const result = await rpc("paws_live_capture", { p_user: id });
+            const result = await rpc("paws_live_capture_shared", {
+              p_actor: id,
+            });
             await bot("sendMessage", {
               chat_id: id,
               text: result.annulled
@@ -413,7 +439,9 @@ export function createHandler(deps: Dependencies) {
               reply_markup: walkButtons,
             });
           } else if (command === "/cancel") {
-            await rpc("paws_live_cancel", { p_user: id });
+            await rpc("paws_live_cancel", {
+              p_user: await accounts.resolve(id),
+            });
             await bot("sendMessage", {
               chat_id: id,
               text:
@@ -421,7 +449,9 @@ export function createHandler(deps: Dependencies) {
               reply_markup: walkButtons,
             });
           } else {
-            const result = await rpc("paws_live_status", { p_user: id });
+            const result = await rpc("paws_live_status_shared", {
+              p_actor: id,
+            });
             const walk = result.walk;
             await bot("sendMessage", {
               chat_id: id,
@@ -483,7 +513,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "1.0.0",
+        version: "1.1.0",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -509,11 +539,12 @@ export function createHandler(deps: Dependencies) {
         !capabilities.dailyIncome || !capabilities.geoChat ||
         !capabilities.liveOnly || !capabilities.captureHelp ||
         !capabilities.extraCamouflage || !capabilities.breeds ||
-        !capabilities.headquarters
+        !capabilities.headquarters || !capabilities.sharedPet ||
+        !capabilities.unlimitedGpsGap
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.1.0.");
+        throw new ApiError(503, "Установите полную миграцию v.1.1.");
       }
-      return { ok: true, version: "1.0.0" };
+      return { ok: true, version: "1.1.0" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -522,7 +553,20 @@ export function createHandler(deps: Dependencies) {
         "Откройте приложение через кнопку Telegram-бота.",
       );
     }
-    const user = await verifyInitData(authorization.slice(4), token, now());
+    const actor = await verifyInitData(authorization.slice(4), token, now());
+    if (path.startsWith("/api/accounts")) {
+      // user.username читаем только после успешной проверки всей initData.
+      const identity = JSON.parse(
+        new URLSearchParams(authorization.slice(4)).get("user") ?? "{}",
+      );
+      return accounts.api(
+        path,
+        req.method,
+        actor,
+        identity.username,
+        req.method === "POST" ? await jsonBody(req) : {},
+      );
+    }
     if (
       (path === "/api/shop" && req.method === "GET") ||
       (path.startsWith("/api/shop/orders/") && req.method === "GET") ||
@@ -530,10 +574,11 @@ export function createHandler(deps: Dependencies) {
     ) {
       return await commerce.api(
         path,
-        user,
+        actor,
         req.method === "POST" ? await jsonBody(req) : {},
       );
     }
+    const user = await accounts.resolve(actor);
     if (path === "/api/activity" && req.method === "POST") {
       const b = await jsonBody(req);
       if (typeof b.timezone !== "string" || b.timezone.length > 100) {
@@ -629,7 +674,7 @@ export function createHandler(deps: Dependencies) {
       return result;
     }
     if (path === "/api/live/status" && req.method === "GET") {
-      return await rpc("paws_live_status", { p_user: user });
+      return await rpc("paws_live_status_shared", { p_actor: actor });
     }
     if (path === "/api/live/start" && req.method === "POST") {
       const b = await jsonBody(req);
@@ -649,7 +694,7 @@ export function createHandler(deps: Dependencies) {
       return result;
     }
     if (path === "/api/live/capture" && req.method === "POST") {
-      return await rpc("paws_live_capture", { p_user: user });
+      return await rpc("paws_live_capture_shared", { p_actor: actor });
     }
     if (path === "/api/live/cancel" && req.method === "POST") {
       return await rpc("paws_live_cancel", { p_user: user });

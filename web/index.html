@@ -38,19 +38,23 @@
   </head>
   <body>
     <main class="app">
-      <header class="header">
-        <div>
-          <p class="eyebrow">Добро пожаловать мой генерал</p>
-          <h1>DogWars.<br /><span>Захвати мир!</span></h1>
+      <header class="header war-header">
+        <p class="eyebrow">Добро пожаловать мой генерал</p>
+        <h1 class="war-wordmark" aria-label="DogWars"><span>DogWars</span></h1>
+        <p class="war-tagline">Захвати мир!</p>
+        <div class="profile-entry">
+          <button id="profile-open" class="profile-label" disabled>
+            Профиль
+          </button>
+          <button
+            id="profile-button"
+            class="avatar-button"
+            aria-label="Профиль питомца"
+            disabled
+          >
+            <img src="./assets/paw.svg" alt="Фото питомца">
+          </button>
         </div>
-        <button
-          id="profile-button"
-          class="avatar-button"
-          aria-label="Мой питомец"
-          disabled
-        >
-          <img src="./assets/paw.svg" alt="Досье питомца">
-        </button>
       </header>
       <div class="office-bar">
         <div>
@@ -84,10 +88,10 @@
         </select></label>
       <p id="server-notice" class="server-notice" role="status" hidden>
         Некоторые функции ожидают обновления сервиса. <a
-          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V1_0.md"
+          href="https://github.com/igorigorigor39rus-dotcom/baza413/blob/prototype/guide/UPDATE_V1_1.md"
           target="_blank"
           rel="noopener noreferrer"
-        >Инструкция v.1.0</a>
+        >Инструкция v.1.1</a>
       </p>
       <section class="map-wrap" aria-label="Карта территорий">
         <div id="map"></div>
@@ -203,28 +207,42 @@
       <footer>Собираем впечатления, а не километры <span>✦</span></footer>
     </main>
     <dialog id="hq-dialog" aria-labelledby="hq-title">
-      <div class="dialog-heading">
-        <h2 id="hq-title">Штаб Генерала</h2>
-        <button id="close-hq" class="close-button" aria-label="Закрыть штаб">
-          ×
-        </button>
+      <div class="hq-landscape">
+        <div id="hq-scene" class="hq-scene"></div>
+        <header class="hq-top">
+          <div>
+            <h2 id="hq-title">Штаб Генерала</h2>
+            <p id="hq-level"></p>
+            <p id="hq-pet-name"></p>
+          </div>
+          <div>
+            <p id="hq-balance"></p>
+            <button
+              id="close-hq"
+              class="close-button"
+              aria-label="Закрыть штаб"
+            >
+              ×
+            </button>
+          </div>
+        </header>
+        <p id="hq-status" role="status"></p>
+        <footer class="hq-hud">
+          <div class="hq-meter">
+            <span>0%</span><div class="hq-progress-wrap">
+              <progress
+                id="hq-progress"
+                max="100"
+                value="0"
+                aria-label="Уровень улучшения штаба"
+              >
+                0%
+              </progress><output id="hq-percent">0%</output>
+            </div><span>100%</span>
+          </div>
+          <button id="hq-upgrade" class="primary" disabled>Улучшить</button>
+        </footer>
       </div>
-      <p id="hq-level" class="eyebrow"></p>
-      <div id="hq-scene" class="hq-scene"></div>
-      <p id="hq-pet-name"></p>
-      <div class="hq-meter">
-        <label for="hq-progress">Улучшение штаба</label><strong id="hq-percent"
-        >0%</strong><progress id="hq-progress" max="100" value="0">
-          0%
-        </progress><span>0% · начальный</span><span>100% · максимальный</span>
-      </div>
-      <p id="hq-balance"></p>
-      <p id="hq-cost" class="hint"></p>
-      <p id="hq-status" role="status"></p>
-      <button id="hq-upgrade" class="primary" disabled>Улучшить</button>
-      <button id="hq-profile" class="text-button">
-        Выбрать породу в досье
-      </button>
     </dialog>
     <dialog id="chat-dialog">
       <div class="dialog-heading">
@@ -410,6 +428,46 @@
           >
             <path d="M1 1H199V54H1Z" />
           </svg>
+        </fieldset>
+        <fieldset id="account-settings" hidden>
+          <legend>Второй Telegram-аккаунт</legend>
+          <p id="account-state" class="hint"></p>
+          <div id="account-primary">
+            <label>Ссылка на второй аккаунт<input
+                id="account-username"
+                maxlength="120"
+                placeholder="https://t.me/username или @username"
+                autocomplete="off"
+              ></label>
+            <p class="hint">
+              Общий питомец, территория и баланс. Второй человек сможет тратить
+              🦴. Приглашение нужно подтвердить с его аккаунта в боте.
+            </p>
+            <button id="account-invite" type="button" class="secondary">
+              Создать приглашение
+            </button>
+            <div id="account-share" hidden>
+              <label>Передайте ссылку второму аккаунту<input
+                  id="account-invite-url"
+                  readonly
+                ></label>
+              <button id="account-copy" type="button" class="text-button">
+                Копировать ссылку
+              </button>
+            </div>
+            <button
+              id="account-cancel"
+              type="button"
+              class="text-button"
+              hidden
+            >
+              Отменить приглашение
+            </button>
+            <button id="account-remove" type="button" class="secondary" hidden>
+              Отключить второй аккаунт
+            </button>
+          </div>
+          <p id="account-status" role="status"></p>
         </fieldset>
         <p id="profile-error" class="error" role="alert"></p>
         <button type="submit" id="save-profile" class="primary">

@@ -3,6 +3,7 @@ import { createLocationSource } from "./location.mjs";
 import { createPurchasing } from "./purchasing.mjs";
 import { createBreedPicker } from "./breeds.mjs";
 import { dogPortrait } from "./dog.mjs";
+import { createAccounts } from "./accounts.mjs";
 import { createHeadquarters } from "./headquarters.mjs";
 import { createChat } from "./chat.mjs";
 import { formatDailyRate, payoutText } from "./income.mjs";
@@ -59,7 +60,7 @@ let map,
 let purchasing;
 let fullscreen;
 let notifications;
-let shop, presence, ownerPet, focusedTerritory, headquarters;
+let shop, presence, ownerPet, focusedTerritory, headquarters, accounts;
 const breedPicker = createBreedPicker();
 const photoMarkers = [];
 function photoIcon(pet) {
@@ -108,10 +109,11 @@ function render() {
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
     !liveLast || Date.now() / 1000 - liveLast.timestamp > 15 ||
-    state.live.points.length < 4;
+    state.live.points.length < 4 || state.live.trackingByMe === false;
   $("live-cancel").disabled = state.busy;
   $("profile-button").disabled = Boolean(state.live) || !state.connected ||
     state.busy;
+  $("profile-open").disabled = $("profile-button").disabled;
   $("walk-title").textContent = state.pet
     ? `На прогулку, ${state.pet.name}?`
     : "Откроем личное дело?";
@@ -217,11 +219,13 @@ function initMap() {
     message,
   });
   presence = createPresence({ api, context: () => state });
+  accounts = createAccounts({ api, context: () => state });
   headquarters = createHeadquarters({
     api,
     context: () => state,
     onWallet: refreshWallet,
     onProfile: editProfile,
+    telegram,
   });
   map.on("dragstart", () => {
     if (focusedTerritory) {
@@ -341,6 +345,7 @@ async function boot() {
 function editProfile() {
   if (state.busy || !state.connected) return;
   const p = state.pet;
+  void accounts?.refresh();
   breedPicker.set(p);
   $("pet-name").value = p?.name || "";
   $("pet-age").value = p?.age ?? "";
@@ -630,6 +635,9 @@ async function refreshLive() {
         });
       }
       $("live-status").textContent = state.live.error ||
+        (state.live.trackingByMe === false
+          ? "Прогулка идёт с другого аккаунта. Завершить её можно только там, где началась трансляция."
+          : "") ||
         (!last
           ? `Ждём трансляцию геопозиции с точностью ≤${maxAccuracy()} м.`
           : `Принято точек: ${points.length}. GPS ±${
@@ -797,3 +805,5 @@ function fitChat() {
 }
 window.visualViewport?.addEventListener("resize", fitChat);
 $("open-chat").addEventListener("click", fitChat);
+
+$("profile-open").addEventListener("click", editProfile);

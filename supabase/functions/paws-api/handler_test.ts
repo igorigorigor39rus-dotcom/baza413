@@ -29,6 +29,7 @@ async function signed(id = 42, date = NOW) {
 type Call = { url: string; options: RequestInit };
 function fixture(
   respond?: (url: string, options: RequestInit) => Response | Promise<Response>,
+  resolveOwner: (actor: number) => number = (id) => id,
 ) {
   const calls: Call[] = [];
   const env: Record<string, string> = {
@@ -42,6 +43,16 @@ function fixture(
     env: (n) => env[n],
     now: () => NOW,
     fetch: ((url: string | URL | Request, options: RequestInit = {}) => {
+      // Доступ проверяется отдельно в accounts_test и интеграционном v11-тесте.
+      if (String(url).endsWith("/paws_account_resolve")) {
+        return Promise.resolve(
+          Response.json({
+            ownerId: String(
+              resolveOwner(JSON.parse(String(options.body)).p_user),
+            ),
+          }),
+        );
+      }
       calls.push({ url: String(url), options });
       return Promise.resolve(
         respond ? respond(String(url), options) : Response.json(
@@ -67,6 +78,9 @@ function fixture(
               extraCamouflage: true,
               breeds: true,
               headquarters: true,
+              sharedPet: true,
+              unlimitedGpsGap: true,
+              landscapeHQ: true,
               dailyIncome: true,
               incomePeriodSeconds: 86400,
               sqmPerBone: 10,
@@ -421,7 +435,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "1.0.0" && config.features.chat === false &&
+    config.version === "1.1.0" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -478,10 +492,10 @@ Deno.test("live: только подписанный Telegram update с влад
     }),
   );
   assert(r.status === 200);
-  const c = f.calls.find((c) => c.url.endsWith("/paws_live_receive"))!;
+  const c = f.calls.find((c) => c.url.endsWith("/paws_live_receive_shared"))!;
   const payload = JSON.parse(String(c.options.body));
   assert(
-    payload.p_user === 42 && payload.p_timestamp === NOW &&
+    payload.p_actor === 42 && payload.p_timestamp === NOW &&
       payload.p_accuracy === 12 && payload.p_initial === false &&
       payload.p_sent_at === NOW - 20,
   );
@@ -593,8 +607,10 @@ Deno.test("v06: кнопки прогулки проверяют отправи�
       await request("/webhook", "POST", { callback_query: query }, headers),
     )).status === 200,
   );
-  const capture = f.calls.find((c) => c.url.endsWith("/paws_live_capture"))!;
-  assert(JSON.parse(String(capture.options.body)).p_user === 42);
+  const capture = f.calls.find((c) =>
+    c.url.endsWith("/paws_live_capture_shared")
+  )!;
+  assert(JSON.parse(String(capture.options.body)).p_actor === 42);
   assert(f.calls.some((c) => c.url.endsWith("/answerCallbackQuery")));
   const count = f.calls.length;
   for (
@@ -677,7 +693,8 @@ Deno.test("v06: новая трансляция передаёт в БД при�
   );
   const args = JSON.parse(String(f.calls[0].options.body));
   assert(
-    f.calls[0].url.endsWith("/paws_live_receive") && args.p_initial === true &&
+    f.calls[0].url.endsWith("/paws_live_receive_shared") &&
+      args.p_initial === true &&
       args.p_sent_at === NOW && args.p_accuracy === 20,
   );
 });
@@ -860,7 +877,10 @@ Deno.test("v09: захват трансляции не вызывает репа
     (await f.handler(await request("/api/live/capture", "POST"))).status ===
       200,
   );
-  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_live_capture"));
+  assert(
+    f.calls.length === 1 &&
+      f.calls[0].url.endsWith("/paws_live_capture_shared"),
+  );
 });
 
 const SPEED_WARNING = "Ай яй яй, захват аннулирован, играй честно";
@@ -879,7 +899,10 @@ Deno.test("v09: захват трансляции возвращает окон�
     response.status === 422 && data.annulled && data.code === "SPEED_LIMIT" &&
       data.detail === SPEED_WARNING,
   );
-  assert(f.calls.length === 1 && f.calls[0].url.endsWith("/paws_live_capture"));
+  assert(
+    f.calls.length === 1 &&
+      f.calls[0].url.endsWith("/paws_live_capture_shared"),
+  );
 });
 Deno.test("v08: бот сообщает об аннулировании без NaN и подтверждает webhook", async () => {
   const f = fixture((url) =>
@@ -1028,7 +1051,7 @@ Deno.test("v09: кнопка Захватить без трансляции да
   const help =
     "Включите трансляцию: 📎 → Геопозиция → Транслировать геопозицию. Затем пройдите маршрут и нажмите «Захватить».";
   const f = fixture((url) =>
-    url.endsWith("/paws_live_capture")
+    url.endsWith("/paws_live_capture_shared")
       ? Response.json({ code: "P0001", message: help }, { status: 400 })
       : Response.json({ ok: true, result: {} })
   );
@@ -1144,4 +1167,32 @@ Deno.test("v10: breed and dossier saved with one RPC and verified identity", asy
     }),
   );
   assert(invalid.status === 422 && f.calls.length === 1);
+});
+
+Deno.test("v11: shared profile/HQ use owner, live capture and account controls preserve signed actor", async () => {
+  const f = fixture(
+    (_url, _options) => Response.json({ level: 1 }),
+    (id) => id === 88 ? 42 : id,
+  );
+  const headers = { Authorization: `tma ${await signed(88)}` };
+  assert(
+    (await f.handler(await request("/api/hq", "GET", undefined, headers)))
+      .status === 200,
+  );
+  assert(JSON.parse(String(f.calls.at(-1)!.options.body)).p_user === 42);
+  assert(
+    (await f.handler(
+      await request("/api/live/capture", "POST", undefined, headers),
+    )).status === 200,
+  );
+  assert(
+    f.calls.at(-1)!.url.endsWith("/paws_live_capture_shared") &&
+      JSON.parse(String(f.calls.at(-1)!.options.body)).p_actor === 88,
+  );
+  assert(
+    (await f.handler(
+      await request("/api/accounts/secondary", "DELETE", undefined, headers),
+    )).status === 200,
+  );
+  assert(JSON.parse(String(f.calls.at(-1)!.options.body)).p_user === 88);
 });

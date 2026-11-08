@@ -1,0 +1,9 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DogWars — 120 пород для штаба</title>
+<style>body{margin:0;padding:24px;background:#20242b;color:#e7e8ec;font:15px system-ui}h1{margin:0 0 12px}p{color:#b9c1cf}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px}article{background:linear-gradient(#3e3949,#302e39);border:1px solid #75808e;border-radius:12px;padding:10px;text-align:center}.hq-pet{display:block;width:100%;height:185px}h2{font-size:13px;font-weight:500;margin:8px 0}button{background:#c2ccd9;padding:8px 15px;border-radius:7px;border:0}input{padding:8px;border-radius:6px;margin:12px 0}</style>
+<h1>120 пород для штаба</h1><p>Лист для проверки рисунков v.1.1. Игровых данных и деморежима здесь нет. Поиск — по названию породы.</p><input id="search" placeholder="Найти породу…"><main></main>
+<script type="module">
+import {BREED_SPRITES,headquartersPet} from '../web/hq-pet.mjs';import {BREED_SPRITE_IDS} from '../web/hq-breed-map.mjs';
+const catalog=await(await fetch('../web/assets/breeds.json')).json();
+for(let slot=0;slot<120;slot++){const id=Object.keys(BREED_SPRITE_IDS).find(id=>BREED_SPRITE_IDS[id]===slot);const b=catalog.find(b=>b.id===id);const a=document.createElement('article');a.append(headquartersPet({breedId:id,breedName:b.name}));const h=document.createElement('h2');h.textContent=b.name;a.append(h);a.dataset.name=(b.name+' '+b.aliases.join(' ')+' '+BREED_SPRITES[slot][0]).toLowerCase();document.querySelector('main').append(a);}
+document.querySelector('#search').addEventListener('input',e=>{for(const a of document.querySelectorAll('article'))a.hidden=!a.dataset.name.includes(e.target.value.toLowerCase());});
+</script></html>
