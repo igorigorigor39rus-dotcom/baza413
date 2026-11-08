@@ -1,0 +1,56 @@
+name: Publish v1.1 update archive
+
+# Этот запуск нужен, когда облачное соединение не может загрузить файл
+# на uploads.github.com. Архив собирает GitHub из уже проверенного тега;
+# дополнительный личный токен или секрет пользователя не нужен.
+on:
+  push:
+    branches: [prototype]
+    paths: [.github/workflows/publish-release-archive.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v.1.1
+          persist-credentials: false
+      - name: Build and verify update archive
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import subprocess
+          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          target = '/tmp/baza413-v.1.1.zip'
+          with ZipFile(target, 'w', ZIP_DEFLATED, compresslevel=6) as archive:
+              for name in sorted(filter(None, paths)):
+                  path = Path(name)
+                  if path.parts[0] == 'design' and path.suffix == '.png':
+                      continue
+                  assert path.name == '.env.example' or not path.name.startswith('.env')
+                  archive.write(path, 'baza413-v.1.1/' + name)
+              archive.writestr('baza413-v.1.1/ARCHIVE_INFO.txt',
+                  'Update archive: all application files included. Original illustration PNGs are available in the full GitHub Source code ZIP.\n')
+          with ZipFile(target) as archive:
+              assert archive.testzip() is None
+              assert archive.read('baza413-v.1.1/VERSION').strip() == b'1.1.0'
+              for name in ['supabase/migrations/202611080001_v11.sql',
+                           'supabase/functions/paws-api/accounts.ts',
+                           'docs/hq-pet.mjs', 'docs/accounts.mjs',
+                           'docs/assets/pets/dogs-e.webp']:
+                  assert 'baza413-v.1.1/' + name in archive.namelist()
+          print('Verified archive bytes:', Path(target).stat().st_size)
+          PY
+      - name: Upload archive and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload v.1.1 /tmp/baza413-v.1.1.zip --clobber
+          gh release edit v.1.1 --draft=false --latest
