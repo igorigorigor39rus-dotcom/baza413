@@ -1,0 +1,4 @@
+project_id = "dogwars-feedback-bot"
+
+[functions.dogwars-feedback]
+verify_jwt = false

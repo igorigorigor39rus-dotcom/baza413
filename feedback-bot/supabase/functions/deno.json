@@ -1,0 +1,7 @@
+{
+  "compilerOptions": { "strict": true },
+  "tasks": {
+    "test": "deno test dogwars-feedback/handler_test.ts",
+    "check": "deno check dogwars-feedback/index.ts"
+  }
+}
