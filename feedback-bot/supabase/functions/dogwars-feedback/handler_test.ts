@@ -86,6 +86,63 @@ Deno.test("/id works before group configuration and does not expose secrets", as
   assert(row.p_payload.text.includes("9"));
   assert(!JSON.stringify(row).includes(config.secret));
 });
+Deno.test("bootstrap acknowledges /start and group messages so /id is not delayed", async () => {
+  const f = fixture();
+  const handler = makeHandler(
+    { ...config, groupId: 0, adminIds: [] },
+    f.services,
+  );
+  const send = (update: any) =>
+    handler(
+      new Request("https://local.test/", {
+        method: "POST",
+        headers: { "X-Telegram-Bot-Api-Secret-Token": config.secret },
+        body: JSON.stringify(update),
+      }),
+    );
+  assert((await send(privateMessage("/start"))).status === 200);
+  assert([...f.queue.values()][0].p_payload.text.includes("/id"));
+  assert((await send(groupMessage(7))).status === 200);
+  assert(
+    (await send({ ...privateMessage("/id"), update_id: 3 })).status === 200,
+  );
+  assert(
+    [...f.queue.values()].some((x) =>
+      x.p_payload.text.includes("Ваш Telegram ID: 9")
+    ),
+  );
+  assert(!f.calls.some((x) => x.name === "feedback_apply"));
+});
+Deno.test("bootstrap rejects checkout promptly but preserves successful payment for retry", async () => {
+  const f = fixture();
+  const handler = makeHandler(
+    { ...config, groupId: 0, adminIds: [] },
+    f.services,
+  );
+  const send = (update: any) =>
+    handler(
+      new Request("https://local.test/", {
+        method: "POST",
+        headers: { "X-Telegram-Bot-Api-Secret-Token": config.secret },
+        body: JSON.stringify(update),
+      }),
+    );
+  assert(
+    (await send({
+      update_id: 5,
+      pre_checkout_query: { id: "c", from: { id: 9 } },
+    })).status === 200,
+  );
+  assert(
+    f.telegram[0].method === "answerPreCheckoutQuery" &&
+      f.telegram[0].payload.ok === false,
+  );
+  assert(
+    (await send(
+      privateMessage("", { successful_payment: { currency: "XTR" } }),
+    )).status === 503,
+  );
+});
 Deno.test("ordinary group members cannot reply to users or alter statuses", async () => {
   const f = fixture();
   await f.send(groupMessage(99));

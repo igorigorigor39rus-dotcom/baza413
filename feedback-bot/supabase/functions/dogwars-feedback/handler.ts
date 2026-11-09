@@ -178,10 +178,34 @@ export function makeHandler(config: Config, services: Services) {
           `Ваш Telegram ID: ${actor}\nID этого чата: ${chatId}`,
         );
       } else if (config.groupId >= 0 || config.adminIds.length === 0) {
-        return new Response(
-          "Configure feedback group and administrators first",
-          { status: 503 },
-        );
+        // /start приходит раньше /id. Подтверждаем его, чтобы Telegram не
+        // повторял доставку и не задерживал команды начальной настройки.
+        if (checkout) {
+          await services.telegram("answerPreCheckoutQuery", {
+            pre_checkout_query_id: checkout.id,
+            ok: false,
+            error_message: "Бот ещё настраивается. Оплата временно недоступна.",
+          });
+        } else if (
+          privateChat && !callback &&
+          (message.successful_payment || message.refunded_payment)
+        ) {
+          // Уже состоявшиеся платежи нельзя потерять при временной смене настроек.
+          return new Response("Finish configuring feedback administrators", {
+            status: 503,
+          });
+        } else if (callback) {
+          await services.telegram("answerCallbackQuery", {
+            callback_query_id: callback.id,
+            text: "Бот ещё настраивается. Для получения ID отправьте /id.",
+          });
+        } else if (privateChat) {
+          await say(
+            prefix,
+            actor,
+            "Бот ещё настраивается. Отправьте /id, чтобы узнать свой Telegram ID.",
+          );
+        }
       } else if (checkout) {
         const payload = String(checkout.invoice_payload ?? "");
         result = await apply("checkout", {
