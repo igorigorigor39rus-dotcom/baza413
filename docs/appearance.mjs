@@ -1,4 +1,4 @@
-const CAMO_IMAGE = new URL("./assets/military-camo.png?v=1.1.1", import.meta.url).href;
+const CAMO_IMAGE = new URL("./assets/military-camo.png?v=1.1.2", import.meta.url).href;
 const svgIds = new WeakMap();
 let svgSequence = 0;
 export function hueColor(hue, saturation = 55) {

@@ -1,3 +1,4 @@
+import { createSync } from "./sync.mjs";
 import { createPetDeletion } from "./pet-deletion.mjs";
 import { photoSize } from "./tracking.mjs";
 import { createLocationSource } from "./location.mjs";
@@ -91,7 +92,14 @@ async function api(path, options = {}) {
       : {}),
     ...options.headers,
   };
-  return client.api(path, { ...options, headers });
+  const changesState = options.method && options.method !== "GET" &&
+    path !== "/api/sync";
+  if (changesState) synchronizer.beginMutation();
+  try {
+    return await client.api(path, { ...options, headers });
+  } finally {
+    if (changesState) synchronizer.endMutation();
+  }
 }
 const json = (body) => ({ "Content-Type": "application/json" });
 function message(text) {
@@ -219,7 +227,11 @@ function initMap() {
     message,
   });
   fullscreen = createMapFullscreen({ map, telegram, context: () => state });
-  notifications = createNotifications({ api, context: () => state });
+  notifications = createNotifications({
+    api,
+    context: () => state,
+    sync: () => synchronizer.refresh(),
+  });
   shop = createShop({
     api,
     context: () => state,
@@ -227,7 +239,11 @@ function initMap() {
     onPaid: refreshWallet,
     message,
   });
-  presence = createPresence({ api, context: () => state });
+  presence = createPresence({
+    api,
+    context: () => state,
+    sync: () => synchronizer.refresh(),
+  });
   petDeletion = createPetDeletion({ api, context: () => state });
   accounts = createAccounts({ api, context: () => state });
   headquarters = createHeadquarters({
@@ -334,9 +350,15 @@ async function boot() {
     await refreshMe();
     state.connected = true;
     await refreshMap();
-    void refreshWallet();
-    void notifications.refresh();
-    const liveState = await refreshLive();
+    let liveState;
+    if (state.config.features.efficientSync) {
+      const snapshot = await synchronizer.start();
+      liveState = snapshot?.live;
+    } else {
+      void refreshWallet();
+      void notifications.refresh();
+      liveState = await refreshLive();
+    }
     message(
       liveState?.result?.annulled
         ? liveState.result.detail
@@ -602,80 +624,123 @@ function updatePreview() {
 for (const id of ["pet-hue", "pet-saturation", "pet-opacity", "pet-pattern"]) {
   $(id).addEventListener("input", updatePreview);
 }
+let lastWalletBalance = null;
+function showWallet(w) {
+  setBonesText($("wallet-balance"), w.balance, "", " 🦴");
+  if (String(w.balance) !== lastWalletBalance) {
+    lastWalletBalance = String(w.balance);
+    headquarters?.walletChanged();
+  }
+  if (w.incomePeriodSeconds === 86400) {
+    $("wallet-rate").textContent = `${formatDailyRate(w.rate)} 🦴/сутки`;
+    $("wallet-rate").title = "Доход за полные сутки при текущей площади";
+    $("wallet-payout").textContent = payoutText(w);
+  } else {
+    $("wallet-rate").textContent =
+      "Для суточного дохода обновите сервер до v.0.9";
+    $("wallet-payout").textContent = "";
+  }
+}
 async function refreshWallet() {
   if (!state.connected || !state.pet || client.isPython) return;
   try {
+    if (state.config?.features?.efficientSync) return synchronizer.refresh();
     const w = await api("/api/wallet");
-    setBonesText($("wallet-balance"), w.balance, "", " 🦴");
-    headquarters?.walletChanged();
-    if (w.incomePeriodSeconds === 86400) {
-      $("wallet-rate").textContent = `${formatDailyRate(w.rate)} 🦴/сутки`;
-      $("wallet-rate").title = "Доход за полные сутки при текущей площади";
-      $("wallet-payout").textContent = payoutText(w);
-    } else {
-      $("wallet-rate").textContent =
-        "Для суточного дохода обновите сервер до v.0.9";
-      $("wallet-payout").textContent = "";
-    }
+    showWallet(w);
   } catch {
     $("wallet-rate").textContent =
       "Доход недоступен: требуется обновление сервера";
   }
 }
 setInterval(() => {
-  if (!document.hidden) void refreshWallet();
+  if (!document.hidden && !state.config?.features?.efficientSync) {
+    void refreshWallet();
+  }
 }, 30000);
-createChat({ api, context: () => state, message });
+const chat = createChat({
+  api,
+  context: () => state,
+  message,
+  sync: () => synchronizer.refresh(),
+});
+const synchronizer = createSync({
+  api,
+  enabled: () => state.connected && state.config?.features?.efficientSync,
+  active: () => Boolean(state.live) || chat.isOpen(),
+  chatRequest: () => chat.request(),
+  async apply(data, room) {
+    showWallet(data.wallet);
+    if (data.notifications) notifications?.accept(data.notifications);
+    presence?.accept(data.presence);
+    if (data.chat) chat.accept(data.chat, room);
+    await showLiveSnapshot(data.live);
+  },
+  error(e) {
+    $("live-status").textContent = e.message;
+    chat.reportError(e.message);
+    $("wallet-rate").textContent = "Нет связи. Повторим обновление.";
+  },
+});
 
 // Состояние фонового режима хранится на сервере, отдельно от браузерного GPS.
 let liveLoading = false, liveFittedId = null, shownAnnulment = null;
+async function showLiveSnapshot(data) {
+  const wasLive = Boolean(state.live);
+  const redraw = state.live?.id !== data.walk?.id ||
+    state.live?.points.length !== data.walk?.points.length;
+  state.live = data.walk;
+  if (data.result?.annulled && shownAnnulment !== data.result.walkId) {
+    shownAnnulment = data.result.walkId;
+    message(data.result.detail);
+  }
+  if (redraw) {
+    liveRouteLayer.setLatLngs(
+      (data.walk?.points ?? []).map((p) => [p.latitude, p.longitude]),
+    );
+  }
+  if (state.live) {
+    const points = state.live.points,
+      last = points.at(-1),
+      age = last ? Date.now() / 1000 - last.timestamp : Infinity;
+    if (points.length && liveFittedId !== state.live.id) {
+      liveFittedId = state.live.id;
+      map.fitBounds(points.map((p) => [p.latitude, p.longitude]), {
+        padding: [30, 30],
+        maxZoom: 17,
+      });
+    }
+    $("live-status").textContent = state.live.error ||
+      (state.live.trackingByMe === false
+        ? "Прогулка идёт с другого аккаунта. Завершить её можно только там, где началась трансляция."
+        : "") ||
+      (!last
+        ? `Ждём трансляцию геопозиции с точностью ≤${maxAccuracy()} м.`
+        : `Принято точек: ${points.length}. GPS ±${
+          Math.round(last.accuracy)
+        } м, ${Math.max(0, Math.round(age))} сек. назад. ${
+          age > 15 ? "Для захвата дождитесь свежей точки." : ""
+        }`);
+  }
+  // Захват командой в чате бота тоже должен обновлять открытую карту.
+  if (wasLive && !state.live) {
+    await refreshMap();
+    await refreshMe();
+    if (!state.config?.features?.efficientSync) await refreshWallet();
+  }
+  render();
+}
 async function refreshLive() {
   if (
     !state.connected ||
     !state.config?.features?.liveTracking || liveLoading
   ) return;
+  if (state.config?.features?.efficientSync) {
+    return (await synchronizer.refresh())?.live;
+  }
   liveLoading = true;
   try {
     const data = await api("/api/live/status");
-    const wasLive = Boolean(state.live);
-    state.live = data.walk;
-    if (data.result?.annulled && shownAnnulment !== data.result.walkId) {
-      shownAnnulment = data.result.walkId;
-      message(data.result.detail);
-    }
-    liveRouteLayer.setLatLngs(
-      (data.walk?.points ?? []).map((p) => [p.latitude, p.longitude]),
-    );
-    if (state.live) {
-      const points = state.live.points,
-        last = points.at(-1),
-        age = last ? Date.now() / 1000 - last.timestamp : Infinity;
-      if (points.length && liveFittedId !== state.live.id) {
-        liveFittedId = state.live.id;
-        map.fitBounds(points.map((p) => [p.latitude, p.longitude]), {
-          padding: [30, 30],
-          maxZoom: 17,
-        });
-      }
-      $("live-status").textContent = state.live.error ||
-        (state.live.trackingByMe === false
-          ? "Прогулка идёт с другого аккаунта. Завершить её можно только там, где началась трансляция."
-          : "") ||
-        (!last
-          ? `Ждём трансляцию геопозиции с точностью ≤${maxAccuracy()} м.`
-          : `Принято точек: ${points.length}. GPS ±${
-            Math.round(last.accuracy)
-          } м, ${Math.max(0, Math.round(age))} сек. назад. ${
-            age > 15 ? "Для захвата дождитесь свежей точки." : ""
-          }`);
-    }
-    // Захват командой в чате бота тоже должен обновлять открытую карту.
-    if (wasLive && !state.live) {
-      await refreshMap();
-      await refreshMe();
-      await refreshWallet();
-    }
-    render();
+    await showLiveSnapshot(data);
     return data;
   } catch (e) {
     $("live-status").textContent = e.message;
@@ -739,7 +804,9 @@ $("live-cancel").addEventListener("click", async () => {
   }
 });
 setInterval(() => {
-  if (!document.hidden) void refreshLive();
+  if (!document.hidden && !state.config?.features?.efficientSync) {
+    void refreshLive();
+  }
 }, 10000);
 let rankingRequest = 0;
 async function loadTop(sort = "bones") {

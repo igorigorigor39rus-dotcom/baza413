@@ -80,6 +80,7 @@ function fixture(
               headquarters: true,
               deletePet: true,
               highQualityHQ: true,
+              efficientSync: true,
               sharedPet: true,
               unlimitedGpsGap: true,
               landscapeHQ: true,
@@ -442,7 +443,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "1.1.1" && config.features.chat === false &&
+    config.version === "1.1.2" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -1361,4 +1362,17 @@ Deno.test("v111: shared secondary may edit but is never offered deletion of the 
     response.status === 200 && data.pet.id === "42" &&
       data.canDeletePet === false,
   );
+});
+
+Deno.test("v112: обновлённая функция сохраняет старые запросы до установки sync SQL", async () => {
+  const ready = fixture();
+  const flags = (await (await ready.handler(await request("/api/config"))).json()).features;
+  delete flags.efficientSync;
+  const olderDatabase = fixture((url) => Response.json(
+    url.endsWith("/paws_capabilities") ? flags : { pet: null, area: 0 },
+  ));
+  const config = await (await olderDatabase.handler(await request("/api/config"))).json();
+  assert(config.version === "1.1.2" && !config.features.efficientSync && config.features.liveTracking);
+  assert((await olderDatabase.handler(await request("/api/me"))).status === 200);
+  assert((await olderDatabase.handler(await request("/health"))).status === 503);
 });

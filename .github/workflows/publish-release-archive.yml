@@ -46,6 +46,8 @@ jobs:
               assert archive.read(prefix + '/VERSION').decode().strip() == version
               for name in ['supabase/migrations/202611080002_v111.sql',
                            'supabase/functions/paws-api/accounts.ts',
+                           'supabase/migrations/202611100001_efficient_sync.sql',
+                           'docs/sync.mjs', 'guide/UPDATE_V1_1_2.md',
                            'docs/pet-deletion.mjs', 'docs/headquarters.mjs',
                            'docs/assets/hq/level-10.webp']:
                   assert prefix + '/' + name in archive.namelist()

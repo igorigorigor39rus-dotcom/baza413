@@ -1,4 +1,4 @@
-import { API_URL } from "./config.mjs?v=1.1.1";
+import { API_URL } from "./config.mjs?v=1.1.2";
 // Вход доступен только через подписанные данные Telegram. Параметры demo/backend
 // больше не переключают приложение на фиктивные кошельки или локальный сервер.
 export function createClient({ fetch: send }) {

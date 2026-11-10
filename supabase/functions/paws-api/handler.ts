@@ -541,7 +541,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "1.1.1",
+        version: "1.1.2",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -568,11 +568,11 @@ export function createHandler(deps: Dependencies) {
         !capabilities.liveOnly || !capabilities.captureHelp ||
         !capabilities.extraCamouflage || !capabilities.breeds ||
         !capabilities.headquarters || !capabilities.sharedPet ||
-        !capabilities.unlimitedGpsGap || !capabilities.deletePet
+        !capabilities.unlimitedGpsGap || !capabilities.deletePet || !capabilities.efficientSync
       ) {
-        throw new ApiError(503, "Установите полную миграцию v.1.1.1.");
+        throw new ApiError(503, "Установите миграцию оптимизации v.1.1.2 после v.1.1.1.");
       }
-      return { ok: true, version: "1.1.1" };
+      return { ok: true, version: "1.1.2" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -582,6 +582,26 @@ export function createHandler(deps: Dependencies) {
       );
     }
     const actor = await verifyInitData(authorization.slice(4), token, now());
+    if (path === "/api/sync" && req.method === "POST") {
+      const b = await jsonBody(req);
+      const after = b.after ?? 0;
+      if ((b.walk != null && (typeof b.walk !== "string" || !UUID.test(b.walk))) ||
+          typeof after !== "number" || !Number.isInteger(after) || after < 0 || after > 5000 ||
+          (b.channel != null && (typeof b.channel !== "string" || !["district", "city", "world"].includes(b.channel))) ||
+          !/^\d{1,18}$/.test(String(b.chatAfter ?? "0")) ||
+          (b.context != null && (typeof b.context !== "string" || b.context.length > 128)) ||
+          (b.notificationsKey != null && (typeof b.notificationsKey !== "string" || !/^[a-f0-9]{32}$/.test(b.notificationsKey))) ||
+          typeof b.timezone !== "string" || b.timezone.length > 100) {
+        throw new ApiError(422, "Не удалось обновить данные. Откройте приложение заново.");
+      }
+      const result = await rpc("paws_sync", {p_actor: actor,p_walk:b.walk ?? null,p_after:b.after ?? 0,
+        p_channel:b.channel ?? null,p_chat_after:b.chatAfter ?? "0",p_context:b.context ?? null,
+        p_notifications_key:b.notificationsKey ?? null,p_timezone:b.timezone});
+      if (result.deliveryPending) await scheduleNotifications({});
+      delete result.deliveryPending;
+      if (result.chat) result.chat.messages = result.chat.messages.map((m: Record<string, unknown>) => ({...m,pet:pet(m.pet as Pet)}));
+      return result;
+    }
     if (path.startsWith("/api/accounts")) {
       // user.username читаем только после успешной проверки всей initData.
       const identity = JSON.parse(

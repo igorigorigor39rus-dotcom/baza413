@@ -1,40 +1,44 @@
 // Сообщение хранится вместе с выплатой и доступно даже при сбое Telegram.
-export function createNotifications({ api, context }) {
+export function createNotifications({ api, context, sync }) {
   const $ = (id) => document.getElementById(id);
   let current = [], loading = null;
   function render() {
     $("open-notifications").hidden = !context().connected ||
       !context().config?.features?.notifications;
   }
+  function accept(result) {
+    current = result.notifications;
+    $("open-notifications").textContent = `Уведомления${
+      result.unread ? ` · ${result.unread}` : ""
+    }`;
+    const fragment = document.createDocumentFragment();
+    for (const note of current) {
+      const item = document.createElement("article"),
+        text = document.createElement("p"),
+        time = document.createElement("time");
+      item.className = note.read ? "" : "unread";
+      text.textContent = note.message;
+      time.textContent = new Date(note.createdAt * 1000).toLocaleString(
+        "ru-RU",
+      );
+      item.append(time, text);
+      fragment.append(item);
+    }
+    $("notifications-list").replaceChildren(fragment);
+    $("notifications-status").textContent = current.length
+      ? ""
+      : "Уведомлений пока нет.";
+    $("notifications-read").disabled = !current.some((n) => !n.read);
+  }
   async function refresh() {
     render();
     if ($("open-notifications").hidden) return;
+    if (context().config?.features?.efficientSync) return sync();
     if (loading) return loading;
     loading = (async () => {
       try {
         const result = await api("/api/notifications");
-        current = result.notifications;
-        $("open-notifications").textContent = `Уведомления${
-          result.unread ? ` · ${result.unread}` : ""
-        }`;
-        const fragment = document.createDocumentFragment();
-        for (const note of current) {
-          const item = document.createElement("article"),
-            text = document.createElement("p"),
-            time = document.createElement("time");
-          item.className = note.read ? "" : "unread";
-          text.textContent = note.message;
-          time.textContent = new Date(note.createdAt * 1000).toLocaleString(
-            "ru-RU",
-          );
-          item.append(time, text);
-          fragment.append(item);
-        }
-        $("notifications-list").replaceChildren(fragment);
-        $("notifications-status").textContent = current.length
-          ? ""
-          : "Уведомлений пока нет.";
-        $("notifications-read").disabled = !current.some((n) => !n.read);
+        accept(result);
       } catch (e) {
         $("notifications-status").textContent = e.message;
       }
@@ -70,7 +74,9 @@ export function createNotifications({ api, context }) {
     }
   });
   setInterval(() => {
-    if (!document.hidden) void refresh();
+    if (!document.hidden && !context().config?.features?.efficientSync) {
+      void refresh();
+    }
   }, 30000);
-  return { refresh, render };
+  return { refresh, render, accept };
 }
