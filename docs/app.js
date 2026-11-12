@@ -1,27 +1,27 @@
-import { createSync } from "./sync.mjs?v=1.1.3";
-import { createPetDeletion } from "./pet-deletion.mjs?v=1.1.3";
-import { photoSize } from "./tracking.mjs?v=1.1.3";
-import { createLocationSource } from "./location.mjs?v=1.1.3";
-import { createPurchasing } from "./purchasing.mjs?v=1.1.3";
-import { createBreedPicker } from "./breeds.mjs?v=1.1.3";
-import { dogPortrait } from "./dog.mjs?v=1.1.3";
-import { createAccounts } from "./accounts.mjs?v=1.1.3";
-import { createHeadquarters } from "./headquarters.mjs?v=1.1.3";
-import { createChat } from "./chat.mjs?v=1.1.3";
-import { formatDailyRate, payoutText } from "./income.mjs?v=1.1.3";
-import { createShop } from "./shop.mjs?v=1.1.3";
-import { createPresence } from "./presence.mjs?v=1.1.3";
-import { createMapFullscreen } from "./fullscreen.mjs?v=1.1.3";
-import { createNotifications } from "./notifications.mjs?v=1.1.3";
-import { setBonesText } from "./numbers.mjs?v=1.1.3";
-import { createClient } from "./client.mjs?v=1.1.3";
+import { createSync } from "./sync.mjs?v=1.1.4";
+import { createPetDeletion } from "./pet-deletion.mjs?v=1.1.4";
+import { photoSize } from "./tracking.mjs?v=1.1.4";
+import { createLocationSource } from "./location.mjs?v=1.1.4";
+import { createPurchasing } from "./purchasing.mjs?v=1.1.4";
+import { createBreedPicker } from "./breeds.mjs?v=1.1.4";
+import { dogPortrait } from "./dog.mjs?v=1.1.4";
+import { createAccounts } from "./accounts.mjs?v=1.1.4";
+import { createHeadquarters } from "./headquarters.mjs?v=1.1.4";
+import { createChat } from "./chat.mjs?v=1.1.4";
+import { formatDailyRate, payoutText } from "./income.mjs?v=1.1.4";
+import { createShop } from "./shop.mjs?v=1.1.4";
+import { createPresence } from "./presence.mjs?v=1.1.4";
+import { createMapFullscreen } from "./fullscreen.mjs?v=1.1.4";
+import { createNotifications } from "./notifications.mjs?v=1.1.4";
+import { setBonesText } from "./numbers.mjs?v=1.1.4";
+import { createClient } from "./client.mjs?v=1.1.4";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=1.1.3";
-import { compressPhoto } from "./photo.mjs?v=1.1.3";
+} from "./appearance.mjs?v=1.1.4";
+import { compressPhoto } from "./photo.mjs?v=1.1.4";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -35,7 +35,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=1.1.3", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=1.1.4", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,

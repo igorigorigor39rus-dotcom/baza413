@@ -1,6 +1,6 @@
 // Предварительная сферическая площадь. Окончательную площадь WGS84, стоимость,
 // свободность участка и списание независимо проверяет сервер PostGIS.
-import { formatBones, fullBones, setBonesText } from "./numbers.mjs?v=1.1.3";
+import { formatBones, fullBones, setBonesText } from "./numbers.mjs?v=1.1.4";
 export function estimateArea(points) {
   if (points.length < 3) return 0;
   const rad = Math.PI / 180;

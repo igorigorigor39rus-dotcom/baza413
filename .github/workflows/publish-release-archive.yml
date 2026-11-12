@@ -50,6 +50,9 @@ jobs:
                            'docs/sync.mjs', 'guide/UPDATE_V1_1_2.md',
                            'supabase/migrations/202611120001_live_completion.sql',
                            'guide/UPDATE_V1_1_3.md',
+                           'supabase/migrations/202611130001_unlimited_walks.sql',
+                           'supabase/functions/paws-api/rpc-errors.ts',
+                           'guide/UPDATE_V1_1_4.md', 'guide/CAPTURE_DIAGNOSTICS.sql',
                            'docs/pet-deletion.mjs', 'docs/headquarters.mjs',
                            'docs/assets/hq/level-10.webp']:
                   assert prefix + '/' + name in archive.namelist()

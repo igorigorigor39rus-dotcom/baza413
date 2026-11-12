@@ -3,12 +3,18 @@ import { ApiError, equalSecret, verifyInitData } from "./auth.ts";
 import { createAccounts } from "./accounts.ts";
 import { createCommerce } from "./commerce.ts";
 import { createEngagement } from "./engagement.ts";
+import {
+  type RpcFailure,
+  rpcFailure,
+  rpcFailureMessage,
+} from "./rpc-errors.ts";
 
 type Dependencies = {
   env: (name: string) => string | undefined;
   fetch: typeof fetch;
   now?: () => number;
   defer?: (task: Promise<void>) => void;
+  reportRpcError?: (failure: RpcFailure) => void;
 };
 type Pet = Record<string, unknown> & { photo_key?: string | null };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -120,9 +126,12 @@ export function createHandler(deps: Dependencies) {
         if (["22003", "22P02", "23514", "23502"].includes(detail.code ?? "")) {
           throw new ApiError(422, "Проверьте данные профиля или GPS.");
         }
+        const failure = rpcFailure(name, response.status, detail.code);
+        if (deps.reportRpcError) deps.reportRpcError(failure);
+        else console.error(JSON.stringify({ event: "rpc_failed", ...failure }));
         throw new ApiError(
           503,
-          "База пока недоступна или миграция не установлена.",
+          rpcFailureMessage(failure),
         );
       }
       return await response.json();
@@ -246,7 +255,7 @@ export function createHandler(deps: Dependencies) {
     ],
   };
   const liveInstructions =
-    "Чтобы гулять с выключенным экраном: скрепка → Геопозиция → Транслировать геопозицию. Запись начнётся сама, когда погрешность GPS будет не больше 20 м. Разрешите Telegram точную геопозицию в фоне. После возвращения к старту в пределах 20 м нажмите «Захватить» ниже.\n\nTelegram требует включить трансляцию вручную; обычная отправка одной точки не записывает маршрут. Точки временно хранятся на сервере. Работа в фоне зависит от телефона и частоты обновлений Telegram. Средняя скорость прогулки — не выше 20 км/ч.";
+    "Чтобы гулять с выключенным экраном: скрепка → Геопозиция → Транслировать геопозицию. Запись начнётся сама, когда погрешность GPS будет не больше 20 м. Разрешите Telegram точную геопозицию в фоне. После возвращения к старту в пределах 20 м нажмите «Захватить» ниже.\n\nTelegram требует включить трансляцию вручную; обычная отправка одной точки не записывает маршрут. Точки временно хранятся на сервере. Работа в фоне зависит от телефона и частоты обновлений Telegram. Средняя скорость прогулки — не выше 20 км/ч. Лимита длительности прогулки нет. Записанный замкнутый трек можно захватить и после остановки трансляции.";
   async function removePhoto(path: string | null | undefined) {
     if (!path || !PHOTO.test(path)) return;
     try {
@@ -398,7 +407,7 @@ export function createHandler(deps: Dependencies) {
             await bot("sendMessage", {
               chat_id: id,
               text:
-                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м и нажмите «Захватить», когда записанный трек замкнётся. Пересечения трека разрешены. Одновременно у питомца может идти только одна трансляция.",
+                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м и нажмите «Захватить», когда записанный трек замкнётся. Пересечения трека разрешены. Лимита времени нет; сохранённый замкнутый трек можно захватить после остановки трансляции. Одновременно у питомца может идти только одна трансляция.",
               reply_markup: walkButtons,
             });
           } else if (
@@ -562,7 +571,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "1.1.3",
+        version: "1.1.4",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -603,7 +612,16 @@ export function createHandler(deps: Dependencies) {
           "Установите SQL 202611120001_live_completion.sql после обновления v.1.1.2.",
         );
       }
-      return { ok: true, version: "1.1.3" };
+      if (
+        !capabilities.unlimitedWalkDuration ||
+        !capabilities.recordedFinishAfterStop
+      ) {
+        throw new ApiError(
+          503,
+          "Установите SQL 202611130001_unlimited_walks.sql после v.1.1.3.",
+        );
+      }
+      return { ok: true, version: "1.1.4" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {

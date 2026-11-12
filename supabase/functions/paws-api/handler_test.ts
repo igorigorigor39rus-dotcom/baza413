@@ -33,6 +33,7 @@ function fixture(
   defer?: (task: Promise<void>) => void,
 ) {
   const calls: Call[] = [];
+  const rpcErrors: Array<{ rpc: string; status: number; code: string }> = [];
   const env: Record<string, string> = {
     SUPABASE_URL: BASE,
     SUPABASE_SERVICE_ROLE_KEY: "test-service-key",
@@ -44,6 +45,9 @@ function fixture(
     env: (n) => env[n],
     now: () => NOW,
     defer,
+    reportRpcError: (failure) => {
+      rpcErrors.push(failure);
+    },
     fetch: ((url: string | URL | Request, options: RequestInit = {}) => {
       // Доступ проверяется отдельно в accounts_test и интеграционном v11-тесте.
       if (String(url).endsWith("/paws_account_resolve")) {
@@ -84,6 +88,8 @@ function fixture(
               highQualityHQ: true,
               efficientSync: true,
               storedLiveCompletion: true,
+              unlimitedWalkDuration: true,
+              recordedFinishAfterStop: true,
               sharedPet: true,
               unlimitedGpsGap: true,
               landscapeHQ: true,
@@ -104,7 +110,7 @@ function fixture(
       );
     }) as typeof fetch,
   });
-  return { handler, calls, env };
+  return { handler, calls, env, rpcErrors };
 }
 async function request(
   path: string,
@@ -446,7 +452,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "1.1.3" && config.features.chat === false &&
+    config.version === "1.1.4" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -1380,7 +1386,7 @@ Deno.test("v112: обновлённая функция сохраняет ста
   const config =
     await (await olderDatabase.handler(await request("/api/config"))).json();
   assert(
-    config.version === "1.1.3" && !config.features.efficientSync &&
+    config.version === "1.1.4" && !config.features.efficientSync &&
       config.features.liveTracking,
   );
   assert(
@@ -1600,5 +1606,83 @@ Deno.test("live completion: health detects missing fix SQL while config supports
       !(await config.json()).features.storedLiveCompletion,
   );
   assert((await old.handler(await request("/api/me"))).status === 200);
+  assert((await ready.handler(await request("/health"))).status === 200);
+});
+
+Deno.test("RPC diagnostics: capture reply and log preserve code without SQL message or GPS", async () => {
+  for (const code of ["57014", "PGRST202", "42501", "XX000"]) {
+    const f = fixture((url) => {
+      if (url.endsWith("/paws_live_capture_shared")) {
+        return Response.json({
+          code,
+          message: "SECRET: raw SQL and private GPS 54.123,20.456",
+          details: "private row",
+          hint: "private hint",
+        }, { status: 400 });
+      }
+      return Response.json(
+        url.includes("api.telegram.org") ? { ok: true, result: {} } : {},
+      );
+    });
+    const response = await f.handler(
+      await request("/webhook", "POST", {
+        message: { chat: { id: 42, type: "private" }, text: "/capture" },
+      }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+    );
+    assert(response.status === 200);
+    const sent = f.calls.filter((call) => call.url.endsWith("/sendMessage"));
+    assert(sent.length === 1);
+    const text = JSON.parse(String(sent[0].options.body)).text;
+    assert(
+      text.includes(code) && !text.includes("SECRET") &&
+        !text.includes("54.123"),
+    );
+    assert(
+      JSON.stringify(f.rpcErrors) ===
+        JSON.stringify([{
+          rpc: "paws_live_capture_shared",
+          status: 400,
+          code,
+        }]),
+    );
+  }
+});
+
+Deno.test("RPC diagnostics: API retains recoverable status, malformed code never leaks", async () => {
+  const f = fixture((url) =>
+    Response.json(
+      { code: "PGRST202?token=private", message: "do not expose" },
+      { status: 500 },
+    )
+  );
+  const response = await f.handler(await request("/api/live/capture", "POST"));
+  const body = await response.json();
+  assert(response.status === 503 && body.detail.includes("UNKNOWN"));
+  assert(!JSON.stringify(body).includes("private"));
+  assert(f.rpcErrors.length === 1 && f.rpcErrors[0].code === "UNKNOWN");
+});
+
+Deno.test("v114: health requires unlimited-walk SQL and config remains readable during upgrade", async () => {
+  const ready = fixture();
+  const flags =
+    (await (await ready.handler(await request("/api/config"))).json()).features;
+  for (const missing of ["unlimitedWalkDuration", "recordedFinishAfterStop"]) {
+    const older = fixture((url) =>
+      Response.json(
+        url.endsWith("/paws_capabilities")
+          ? { ...flags, [missing]: false }
+          : { pet: null, area: 0 },
+      )
+    );
+    const health = await older.handler(await request("/health"));
+    assert(
+      health.status === 503 &&
+        (await health.json()).detail.includes(
+          "202611130001_unlimited_walks.sql",
+        ),
+    );
+    const config = await older.handler(await request("/api/config"));
+    assert(config.status === 200 && (await config.json()).version === "1.1.4");
+  }
   assert((await ready.handler(await request("/health"))).status === 200);
 });

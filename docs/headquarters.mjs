@@ -1,18 +1,18 @@
-import { headquartersPet } from "./hq-pet.mjs?v=1.1.3";
-import { formatBones, fullBones } from "./numbers.mjs?v=1.1.3";
+import { headquartersPet } from "./hq-pet.mjs?v=1.1.4";
+import { formatBones, fullBones } from "./numbers.mjs?v=1.1.4";
 // Фон, персонаж и свет остаются независимыми слоями сцены.
 // Каждый уровень — отдельный большой фон, без увеличения миниатюры атласа.
 const ROOMS = [
-  "./assets/hq/level-01.webp?v=1.1.3",
-  "./assets/hq/level-02.webp?v=1.1.3",
-  "./assets/hq/level-03.webp?v=1.1.3",
-  "./assets/hq/level-04.webp?v=1.1.3",
-  "./assets/hq/level-05.webp?v=1.1.3",
-  "./assets/hq/level-06.webp?v=1.1.3",
-  "./assets/hq/level-07.webp?v=1.1.3",
-  "./assets/hq/level-08.webp?v=1.1.3",
-  "./assets/hq/level-09.webp?v=1.1.3",
-  "./assets/hq/level-10.webp?v=1.1.3",
+  "./assets/hq/level-01.webp?v=1.1.4",
+  "./assets/hq/level-02.webp?v=1.1.4",
+  "./assets/hq/level-03.webp?v=1.1.4",
+  "./assets/hq/level-04.webp?v=1.1.4",
+  "./assets/hq/level-05.webp?v=1.1.4",
+  "./assets/hq/level-06.webp?v=1.1.4",
+  "./assets/hq/level-07.webp?v=1.1.4",
+  "./assets/hq/level-08.webp?v=1.1.4",
+  "./assets/hq/level-09.webp?v=1.1.4",
+  "./assets/hq/level-10.webp?v=1.1.4",
 ].map((path) => new URL(path, import.meta.url).href);
 const NAMES = [
   "Бетонный угол",
