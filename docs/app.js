@@ -1,27 +1,27 @@
-import { createSync } from "./sync.mjs?v=1.1.2";
-import { createPetDeletion } from "./pet-deletion.mjs?v=1.1.2";
-import { photoSize } from "./tracking.mjs?v=1.1.2";
-import { createLocationSource } from "./location.mjs?v=1.1.2";
-import { createPurchasing } from "./purchasing.mjs?v=1.1.2";
-import { createBreedPicker } from "./breeds.mjs?v=1.1.2";
-import { dogPortrait } from "./dog.mjs?v=1.1.2";
-import { createAccounts } from "./accounts.mjs?v=1.1.2";
-import { createHeadquarters } from "./headquarters.mjs?v=1.1.2";
-import { createChat } from "./chat.mjs?v=1.1.2";
-import { formatDailyRate, payoutText } from "./income.mjs?v=1.1.2";
-import { createShop } from "./shop.mjs?v=1.1.2";
-import { createPresence } from "./presence.mjs?v=1.1.2";
-import { createMapFullscreen } from "./fullscreen.mjs?v=1.1.2";
-import { createNotifications } from "./notifications.mjs?v=1.1.2";
-import { setBonesText } from "./numbers.mjs?v=1.1.2";
-import { createClient } from "./client.mjs?v=1.1.2";
+import { createSync } from "./sync.mjs?v=1.1.3";
+import { createPetDeletion } from "./pet-deletion.mjs?v=1.1.3";
+import { photoSize } from "./tracking.mjs?v=1.1.3";
+import { createLocationSource } from "./location.mjs?v=1.1.3";
+import { createPurchasing } from "./purchasing.mjs?v=1.1.3";
+import { createBreedPicker } from "./breeds.mjs?v=1.1.3";
+import { dogPortrait } from "./dog.mjs?v=1.1.3";
+import { createAccounts } from "./accounts.mjs?v=1.1.3";
+import { createHeadquarters } from "./headquarters.mjs?v=1.1.3";
+import { createChat } from "./chat.mjs?v=1.1.3";
+import { formatDailyRate, payoutText } from "./income.mjs?v=1.1.3";
+import { createShop } from "./shop.mjs?v=1.1.3";
+import { createPresence } from "./presence.mjs?v=1.1.3";
+import { createMapFullscreen } from "./fullscreen.mjs?v=1.1.3";
+import { createNotifications } from "./notifications.mjs?v=1.1.3";
+import { setBonesText } from "./numbers.mjs?v=1.1.3";
+import { createClient } from "./client.mjs?v=1.1.3";
 import {
   colorHue,
   colorSaturation,
   hueColor,
   paintPath,
-} from "./appearance.mjs?v=1.1.2";
-import { compressPhoto } from "./photo.mjs?v=1.1.2";
+} from "./appearance.mjs?v=1.1.3";
+import { compressPhoto } from "./photo.mjs?v=1.1.3";
 
 // Telegram передаёт подписанную строку initData. Самостоятельно придуманному
 // user.id сервер не верит: подпись проверяется в Supabase Edge Function.
@@ -35,7 +35,7 @@ const client = createClient({
   clipping: window.polygonClipping,
   fetch: window.fetch.bind(window),
 });
-const PAW = new URL("./assets/paw.svg?v=1.1.2", import.meta.url).href;
+const PAW = new URL("./assets/paw.svg?v=1.1.3", import.meta.url).href;
 const locationSource = createLocationSource({
   telegram,
   navigator,
@@ -124,7 +124,9 @@ function render() {
   $("live-panel").hidden = !state.live;
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
-    !liveLast || Date.now() / 1000 - liveLast.timestamp > 15 ||
+    !liveLast ||
+    (!state.config?.features?.storedLiveCompletion &&
+      Date.now() / 1000 - liveLast.timestamp > 15) ||
     state.live.points.length < 4 || state.live.trackingByMe === false;
   $("live-cancel").disabled = state.busy;
   $("profile-button").disabled = Boolean(state.live) || !state.connected ||
@@ -718,7 +720,9 @@ async function showLiveSnapshot(data) {
         : `Принято точек: ${points.length}. GPS ±${
           Math.round(last.accuracy)
         } м, ${Math.max(0, Math.round(age))} сек. назад. ${
-          age > 15 ? "Для захвата дождитесь свежей точки." : ""
+          age > 15 && !state.config?.features?.storedLiveCompletion
+            ? "Для захвата дождитесь свежей точки."
+            : ""
         }`);
   }
   // Захват командой в чате бота тоже должен обновлять открытую карту.

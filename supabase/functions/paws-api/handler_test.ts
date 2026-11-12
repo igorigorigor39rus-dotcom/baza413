@@ -30,6 +30,7 @@ type Call = { url: string; options: RequestInit };
 function fixture(
   respond?: (url: string, options: RequestInit) => Response | Promise<Response>,
   resolveOwner: (actor: number) => number = (id) => id,
+  defer?: (task: Promise<void>) => void,
 ) {
   const calls: Call[] = [];
   const env: Record<string, string> = {
@@ -42,6 +43,7 @@ function fixture(
   const handler = createHandler({
     env: (n) => env[n],
     now: () => NOW,
+    defer,
     fetch: ((url: string | URL | Request, options: RequestInit = {}) => {
       // Доступ проверяется отдельно в accounts_test и интеграционном v11-тесте.
       if (String(url).endsWith("/paws_account_resolve")) {
@@ -81,6 +83,7 @@ function fixture(
               deletePet: true,
               highQualityHQ: true,
               efficientSync: true,
+              storedLiveCompletion: true,
               sharedPet: true,
               unlimitedGpsGap: true,
               landscapeHQ: true,
@@ -443,7 +446,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "1.1.2" && config.features.chat === false &&
+    config.version === "1.1.3" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -1366,13 +1369,236 @@ Deno.test("v111: shared secondary may edit but is never offered deletion of the 
 
 Deno.test("v112: обновлённая функция сохраняет старые запросы до установки sync SQL", async () => {
   const ready = fixture();
-  const flags = (await (await ready.handler(await request("/api/config"))).json()).features;
+  const flags =
+    (await (await ready.handler(await request("/api/config"))).json()).features;
   delete flags.efficientSync;
-  const olderDatabase = fixture((url) => Response.json(
-    url.endsWith("/paws_capabilities") ? flags : { pet: null, area: 0 },
-  ));
-  const config = await (await olderDatabase.handler(await request("/api/config"))).json();
-  assert(config.version === "1.1.2" && !config.features.efficientSync && config.features.liveTracking);
-  assert((await olderDatabase.handler(await request("/api/me"))).status === 200);
-  assert((await olderDatabase.handler(await request("/health"))).status === 503);
+  const olderDatabase = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_capabilities") ? flags : { pet: null, area: 0 },
+    )
+  );
+  const config =
+    await (await olderDatabase.handler(await request("/api/config"))).json();
+  assert(
+    config.version === "1.1.3" && !config.features.efficientSync &&
+      config.features.liveTracking,
+  );
+  assert(
+    (await olderDatabase.handler(await request("/api/me"))).status === 200,
+  );
+  assert(
+    (await olderDatabase.handler(await request("/health"))).status === 503,
+  );
+});
+
+// Управляем зависшими зависимостями вручную: проверяем порядок запросов,
+// не обращаясь к Telegram или к рабочему Supabase.
+function latch<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function within<T>(task: Promise<T>, milliseconds = 1000) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Operation blocked by an ancillary request")),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+Deno.test("live completion: slow callback acknowledgement cannot hold up capture", async () => {
+  const ack = latch<Response>(), captured = latch<void>();
+  const deferred: Promise<void>[] = [];
+  const f = fixture(
+    (url, options) => {
+      if (url.endsWith("/answerCallbackQuery")) {
+        assert(options.signal instanceof AbortSignal);
+        return ack.promise;
+      }
+      if (url.endsWith("/paws_live_capture_shared")) {
+        captured.resolve();
+        return Response.json({ area: 123 });
+      }
+      return Response.json(
+        url.includes("api.telegram.org") ? { ok: true, result: {} } : {},
+      );
+    },
+    (id) => id,
+    (task) => {
+      deferred.push(task);
+    },
+  );
+  const response = f.handler(
+    await request("/webhook", "POST", {
+      callback_query: {
+        id: "delayed-ack",
+        data: "walk_capture",
+        from: { id: 42 },
+        message: { chat: { id: 42, type: "private" } },
+      },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  try {
+    await within(captured.promise);
+    assert((await within(response)).status === 200);
+    assert(
+      f.calls.some((c) =>
+        c.url.endsWith("/sendMessage") &&
+        JSON.parse(String(c.options.body)).text.includes("123")
+      ),
+    );
+  } finally {
+    ack.resolve(Response.json({ ok: true, result: {} }));
+    await response;
+    await Promise.all(deferred);
+  }
+});
+
+Deno.test("live completion: activity tracking cannot hold up capture or its reply", async () => {
+  const activity = latch<Response>(), touched = latch<void>();
+  const deferred: Promise<void>[] = [];
+  const f = fixture(
+    (url) => {
+      if (url.endsWith("/paws_activity")) {
+        touched.resolve();
+        return activity.promise;
+      }
+      return Response.json(
+        url.includes("api.telegram.org")
+          ? { ok: true, result: {} }
+          : { area: 321 },
+      );
+    },
+    (id) => id,
+    (task) => {
+      deferred.push(task);
+    },
+  );
+  const response = f.handler(
+    await request("/webhook", "POST", {
+      message: { chat: { id: 42, type: "private" }, text: "/capture" },
+    }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+  );
+  try {
+    assert((await within(response)).status === 200);
+    await within(touched.promise);
+    const paths = f.calls.map((call) => new URL(call.url).pathname);
+    assert(
+      paths.findIndex((p) => p.endsWith("/paws_live_capture_shared")) <
+        paths.findIndex((p) => p.endsWith("/paws_activity")),
+    );
+    assert(
+      f.calls.some((c) =>
+        c.url.endsWith("/sendMessage") &&
+        JSON.parse(String(c.options.body)).text.includes("321")
+      ),
+    );
+  } finally {
+    activity.resolve(Response.json({}));
+    await response;
+    await Promise.all(deferred);
+  }
+});
+
+Deno.test("live completion: database outage is explained in chat and a later retry succeeds", async () => {
+  let attempts = 0;
+  const f = fixture((url, options) => {
+    if (url.endsWith("/paws_live_capture_shared")) {
+      assert(options.signal instanceof AbortSignal);
+      if (++attempts === 1) {
+        throw new TypeError(
+          "Private upstream URL and secrets must never reach chat",
+        );
+      }
+      return Response.json({ area: 456 });
+    }
+    return Response.json(
+      url.includes("api.telegram.org") ? { ok: true, result: {} } : {},
+    );
+  });
+  for (let i = 0; i < 2; i++) {
+    assert(
+      (await f.handler(
+        await request("/webhook", "POST", {
+          message: { chat: { id: 42, type: "private" }, text: "/capture" },
+        }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+      )).status === 200,
+    );
+  }
+  const replies = f.calls.filter((c) => c.url.endsWith("/sendMessage")).map((
+    c,
+  ) => JSON.parse(String(c.options.body)).text);
+  assert(
+    replies.length === 2 && replies[0].includes("Статус") &&
+      replies[1].includes("456"),
+  );
+  assert(!replies.some((text) => text.includes("secrets")));
+});
+
+Deno.test("live completion: real RPC timeout gives a recoverable reply instead of silent waiting", async () => {
+  const f = fixture((url, options) => {
+    if (url.endsWith("/paws_live_capture_shared")) {
+      const signal = options.signal!;
+      return new Promise<Response>((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    }
+    return Response.json(
+      url.includes("api.telegram.org") ? { ok: true, result: {} } : {},
+    );
+  });
+  const started = performance.now();
+  const response = await within(
+    f.handler(
+      await request("/webhook", "POST", {
+        message: { chat: { id: 42, type: "private" }, text: "/capture" },
+      }, { "X-Telegram-Bot-Api-Secret-Token": SECRET }),
+    ),
+    18000,
+  );
+  assert(response.status === 200);
+  assert(performance.now() - started >= 14000);
+  assert(
+    f.calls.some((c) =>
+      c.url.endsWith("/sendMessage") &&
+      JSON.parse(String(c.options.body)).text.includes("не ответил вовремя")
+    ),
+  );
+});
+
+Deno.test("live completion: health detects missing fix SQL while config supports gradual deployment", async () => {
+  const ready = fixture();
+  const flags =
+    (await (await ready.handler(await request("/api/config"))).json()).features;
+  delete flags.storedLiveCompletion;
+  const old = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_capabilities") ? flags : { pet: null, area: 0 },
+    )
+  );
+  const health = await old.handler(await request("/health"));
+  assert(
+    health.status === 503 &&
+      (await health.json()).detail.includes("202611120001_live_completion.sql"),
+  );
+  const config = await old.handler(await request("/api/config"));
+  assert(
+    config.status === 200 &&
+      !(await config.json()).features.storedLiveCompletion,
+  );
+  assert((await old.handler(await request("/api/me"))).status === 200);
+  assert((await ready.handler(await request("/health"))).status === 200);
 });

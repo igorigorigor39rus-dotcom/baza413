@@ -124,7 +124,9 @@ function render() {
   $("live-panel").hidden = !state.live;
   const liveLast = state.live?.points.at(-1);
   $("live-capture").disabled = state.busy || Boolean(state.live?.error) ||
-    !liveLast || Date.now() / 1000 - liveLast.timestamp > 15 ||
+    !liveLast ||
+    (!state.config?.features?.storedLiveCompletion &&
+      Date.now() / 1000 - liveLast.timestamp > 15) ||
     state.live.points.length < 4 || state.live.trackingByMe === false;
   $("live-cancel").disabled = state.busy;
   $("profile-button").disabled = Boolean(state.live) || !state.connected ||
@@ -718,7 +720,9 @@ async function showLiveSnapshot(data) {
         : `Принято точек: ${points.length}. GPS ±${
           Math.round(last.accuracy)
         } м, ${Math.max(0, Math.round(age))} сек. назад. ${
-          age > 15 ? "Для захвата дождитесь свежей точки." : ""
+          age > 15 && !state.config?.features?.storedLiveCompletion
+            ? "Для захвата дождитесь свежей точки."
+            : ""
         }`);
   }
   // Захват командой в чате бота тоже должен обновлять открытую карту.

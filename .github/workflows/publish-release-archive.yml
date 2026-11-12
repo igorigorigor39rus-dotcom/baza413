@@ -48,6 +48,8 @@ jobs:
                            'supabase/functions/paws-api/accounts.ts',
                            'supabase/migrations/202611100001_efficient_sync.sql',
                            'docs/sync.mjs', 'guide/UPDATE_V1_1_2.md',
+                           'supabase/migrations/202611120001_live_completion.sql',
+                           'guide/UPDATE_V1_1_3.md',
                            'docs/pet-deletion.mjs', 'docs/headquarters.mjs',
                            'docs/assets/hq/level-10.webp']:
                   assert prefix + '/' + name in archive.namelist()

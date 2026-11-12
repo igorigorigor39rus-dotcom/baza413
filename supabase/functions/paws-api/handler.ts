@@ -100,28 +100,45 @@ export function createHandler(deps: Dependencies) {
         "Supabase не настроен. Проверьте серверные секреты функции.",
       );
     }
-    const response = await send(`${base}/rest/v1/rpc/${name}`, {
-      method: "POST",
-      headers: { ...adminHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(args),
-    });
-    if (!response.ok) {
-      const detail = await response.json().catch(() => ({})) as {
-        code?: string;
-        message?: string;
-      };
-      if (detail.code === "P0001") {
-        throw new ApiError(422, detail.message ?? "Проверьте маршрут.");
+    // Сеть или блокировка БД не должны оставлять кнопку без ответа на минуты.
+    const signal = AbortSignal.timeout(name === "paws_activity" ? 3000 : 15000);
+    try {
+      const response = await send(`${base}/rest/v1/rpc/${name}`, {
+        method: "POST",
+        headers: { ...adminHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(args),
+        signal,
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({})) as {
+          code?: string;
+          message?: string;
+        };
+        if (detail.code === "P0001") {
+          throw new ApiError(422, detail.message ?? "Проверьте маршрут.");
+        }
+        if (["22003", "22P02", "23514", "23502"].includes(detail.code ?? "")) {
+          throw new ApiError(422, "Проверьте данные профиля или GPS.");
+        }
+        throw new ApiError(
+          503,
+          "База пока недоступна или миграция не установлена.",
+        );
       }
-      if (["22003", "22P02", "23514", "23502"].includes(detail.code ?? "")) {
-        throw new ApiError(422, "Проверьте данные профиля или GPS.");
+      return await response.json();
+    } catch (error) {
+      if (signal.aborted) {
+        throw new ApiError(
+          503,
+          "Сервер не ответил вовремя. Проверьте «Статус» и повторите действие.",
+        );
       }
+      if (error instanceof ApiError) throw error;
       throw new ApiError(
         503,
-        "База пока недоступна или миграция не установлена.",
+        "Не удалось связаться с базой. Проверьте «Статус» и повторите действие.",
       );
     }
-    return await response.json();
   }
   function pet(value: Pet | null) {
     if (!value) return null;
@@ -139,29 +156,20 @@ export function createHandler(deps: Dependencies) {
   async function bot(
     method: string,
     payload: Record<string, unknown>,
-    timeoutMs?: number,
+    timeoutMs = 10000,
   ) {
     if (!token) {
       throw new ApiError(503, "В Supabase не задан TELEGRAM_BOT_TOKEN.");
     }
-    const controller = timeoutMs ? new AbortController() : undefined;
-    const timer = controller
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : undefined;
-    let response: Response;
-    try {
-      response = await send(
-        `https://api.telegram.org/bot${token}/${method}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller?.signal,
-        },
-      );
-    } finally {
-      clearTimeout(timer);
-    }
+    const response = await send(
+      `https://api.telegram.org/bot${token}/${method}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
     if (!response.ok) throw new ApiError(503, "Telegram временно недоступен.");
     const data = await response.json();
     if (!data.ok) throw new ApiError(503, "Telegram отклонил запрос бота.");
@@ -340,10 +348,14 @@ export function createHandler(deps: Dependencies) {
           from?.is_bot ||
           typeof callback.id !== "string" || callback.id.length > 256
         ) return { ok: true };
-        // Устаревшая кнопка не должна мешать идемпотентной серверной операции.
-        try {
-          await bot("answerCallbackQuery", { callback_query_id: callback.id });
-        } catch { /* кнопка могла истечь */ }
+        // Подтверждение нажатия не должно задерживать сам захват. В Supabase
+        // waitUntil завершит короткий служебный запрос независимо от маршрута.
+        const acknowledgement = bot("answerCallbackQuery", {
+          callback_query_id: callback.id,
+          text: command === "/capture" ? "Проверяю маршрут…" : undefined,
+        }, 3000).then(() => {}).catch(() => {/* кнопка могла истечь */});
+        if (deps.defer) deps.defer(acknowledgement);
+        else await acknowledgement;
         m = { chat, from, text: command };
       }
       const location = m?.location as Record<string, unknown> | undefined;
@@ -382,12 +394,11 @@ export function createHandler(deps: Dependencies) {
               ? number(location.live_period, 0, 2147483647)
               : null,
           });
-          if (!update.edited_message) await engagement.touch(id);
           if (result.first) {
             await bot("sendMessage", {
               chat_id: id,
               text:
-                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м, дождитесь свежей точки GPS и нажмите «Захватить». Пересечения трека разрешены. Одновременно у питомца может идти только одна трансляция.",
+                "Прогулка началась — можно выключить экран. Вернитесь к старту в пределах 20 м и нажмите «Захватить», когда записанный трек замкнётся. Пересечения трека разрешены. Одновременно у питомца может идти только одна трансляция.",
               reply_markup: walkButtons,
             });
           } else if (
@@ -430,6 +441,11 @@ export function createHandler(deps: Dependencies) {
               reply_markup: walkButtons,
             });
           }
+          if (!update.edited_message) {
+            const activity = engagement.touch(id);
+            if (deps.defer) deps.defer(activity);
+            else await activity;
+          }
         } catch (error) {
           if (error instanceof ApiError && error.status === 422) {
             await bot("sendMessage", {
@@ -450,7 +466,6 @@ export function createHandler(deps: Dependencies) {
         throw new ApiError(422, "Некорректный chat id.");
       }
       const command = m.text.trim().split(/\s/)[0].split("@")[0];
-      await engagement.touch(id);
       if (["/capture", "/cancel", "/status"].includes(command)) {
         try {
           if (command === "/capture") {
@@ -494,18 +509,24 @@ export function createHandler(deps: Dependencies) {
                   walk.points.at(-1).accuracy
                 } м, ${
                   Math.max(0, Math.round(now() - walk.points.at(-1).timestamp))
-                } сек. назад. Точка не старше 15 секунд нужна для захвата. /capture — захват, /cancel — отмена.`
+                } сек. назад. Для захвата записанный трек должен вернуться к старту в пределах 20 м. /capture — захват, /cancel — отмена.`
                 : "Ждём GPS с погрешностью ≤20 м. Запись начнётся автоматически.",
               reply_markup: walkButtons,
             });
           }
         } catch (e) {
-          if (e instanceof ApiError && e.status === 422) {
+          if (e instanceof ApiError && [422, 503].includes(e.status)) {
             await bot("sendMessage", { chat_id: id, text: e.message });
           } else throw e;
+        } finally {
+          // Напоминаниям нужна отметка посещения, но захват её ждать не должен.
+          const activity = engagement.touch(id);
+          if (deps.defer) deps.defer(activity);
+          else await activity;
         }
         return { ok: true };
       }
+      await engagement.touch(id);
       if (command === "/privacy") {
         await bot("sendMessage", {
           chat_id: id,
@@ -541,7 +562,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "1.1.2",
+        version: "1.1.3",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -568,11 +589,21 @@ export function createHandler(deps: Dependencies) {
         !capabilities.liveOnly || !capabilities.captureHelp ||
         !capabilities.extraCamouflage || !capabilities.breeds ||
         !capabilities.headquarters || !capabilities.sharedPet ||
-        !capabilities.unlimitedGpsGap || !capabilities.deletePet || !capabilities.efficientSync
+        !capabilities.unlimitedGpsGap || !capabilities.deletePet ||
+        !capabilities.efficientSync
       ) {
-        throw new ApiError(503, "Установите миграцию оптимизации v.1.1.2 после v.1.1.1.");
+        throw new ApiError(
+          503,
+          "Установите миграцию оптимизации v.1.1.2 после v.1.1.1.",
+        );
       }
-      return { ok: true, version: "1.1.2" };
+      if (!capabilities.storedLiveCompletion) {
+        throw new ApiError(
+          503,
+          "Установите SQL 202611120001_live_completion.sql после обновления v.1.1.2.",
+        );
+      }
+      return { ok: true, version: "1.1.3" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {
@@ -585,21 +616,44 @@ export function createHandler(deps: Dependencies) {
     if (path === "/api/sync" && req.method === "POST") {
       const b = await jsonBody(req);
       const after = b.after ?? 0;
-      if ((b.walk != null && (typeof b.walk !== "string" || !UUID.test(b.walk))) ||
-          typeof after !== "number" || !Number.isInteger(after) || after < 0 || after > 5000 ||
-          (b.channel != null && (typeof b.channel !== "string" || !["district", "city", "world"].includes(b.channel))) ||
-          !/^\d{1,18}$/.test(String(b.chatAfter ?? "0")) ||
-          (b.context != null && (typeof b.context !== "string" || b.context.length > 128)) ||
-          (b.notificationsKey != null && (typeof b.notificationsKey !== "string" || !/^[a-f0-9]{32}$/.test(b.notificationsKey))) ||
-          typeof b.timezone !== "string" || b.timezone.length > 100) {
-        throw new ApiError(422, "Не удалось обновить данные. Откройте приложение заново.");
+      if (
+        (b.walk != null &&
+          (typeof b.walk !== "string" || !UUID.test(b.walk))) ||
+        typeof after !== "number" || !Number.isInteger(after) || after < 0 ||
+        after > 5000 ||
+        (b.channel != null &&
+          (typeof b.channel !== "string" ||
+            !["district", "city", "world"].includes(b.channel))) ||
+        !/^\d{1,18}$/.test(String(b.chatAfter ?? "0")) ||
+        (b.context != null &&
+          (typeof b.context !== "string" || b.context.length > 128)) ||
+        (b.notificationsKey != null &&
+          (typeof b.notificationsKey !== "string" ||
+            !/^[a-f0-9]{32}$/.test(b.notificationsKey))) ||
+        typeof b.timezone !== "string" || b.timezone.length > 100
+      ) {
+        throw new ApiError(
+          422,
+          "Не удалось обновить данные. Откройте приложение заново.",
+        );
       }
-      const result = await rpc("paws_sync", {p_actor: actor,p_walk:b.walk ?? null,p_after:b.after ?? 0,
-        p_channel:b.channel ?? null,p_chat_after:b.chatAfter ?? "0",p_context:b.context ?? null,
-        p_notifications_key:b.notificationsKey ?? null,p_timezone:b.timezone});
+      const result = await rpc("paws_sync", {
+        p_actor: actor,
+        p_walk: b.walk ?? null,
+        p_after: b.after ?? 0,
+        p_channel: b.channel ?? null,
+        p_chat_after: b.chatAfter ?? "0",
+        p_context: b.context ?? null,
+        p_notifications_key: b.notificationsKey ?? null,
+        p_timezone: b.timezone,
+      });
       if (result.deliveryPending) await scheduleNotifications({});
       delete result.deliveryPending;
-      if (result.chat) result.chat.messages = result.chat.messages.map((m: Record<string, unknown>) => ({...m,pet:pet(m.pet as Pet)}));
+      if (result.chat) {
+        result.chat.messages = result.chat.messages.map((
+          m: Record<string, unknown>,
+        ) => ({ ...m, pet: pet(m.pet as Pet) }));
+      }
       return result;
     }
     if (path.startsWith("/api/accounts")) {

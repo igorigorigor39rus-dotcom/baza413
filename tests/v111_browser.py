@@ -1,4 +1,4 @@
-"""UI v.1.1.1: только локальный сайт, подменённые Telegram/API/GPS/тайлы."""
+"""UI: только локальный сайт, подменённые Telegram/API/GPS/тайлы."""
 import base64
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +11,7 @@ from playwright.sync_api import sync_playwright
 
 
 def main():
+    stored_completion = True
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True,executable_path=os.getenv('BROWSER_PATH','/usr/bin/chromium'))
         context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
@@ -41,7 +42,7 @@ def main():
             else:
                 calls.append((method,path))
                 if path=='/api/config':data={'version':'1.1.1','closureMeters':20,'maxAccuracy':20,'demoMode':False,'features':{
-                    'dossier':True,'chat':True,'wallet':True,'publicWallet':True,'liveTracking':True,'leaderboard':True,
+                    'dossier':True,'chat':True,'wallet':True,'publicWallet':True,'liveTracking':True,'leaderboard':True,'storedLiveCompletion':stored_completion,
                     'autoLiveStart':True,'crossingRoutes':True,'purchases':True,'purchasePrice':10,'territoryLeaderboard':True,'unlimitedPurchases':True,'mergeOwnPurchases':True,'foreignBuyouts':True,'notifications':True,'speedLimit':True,'maxSpeedKmh':20,'starShop':True,'reminders':True,'largestTerritory':True,'dailyIncome':True,'geoChat':True,'liveOnly':True,'extraCamouflage':True,'breeds':True,'headquarters':True,'sharedPet':True,'unlimitedGpsGap':True,'landscapeHQ':True,'deletePet':True,'highQualityHQ':True}}
                 elif path=='/api/accounts':data={'role':account_role,'primaryId':'42','secondary':secondary,'pending':pending}
                 elif path=='/api/accounts/invite':
@@ -300,14 +301,21 @@ def main():
         assert page.evaluate('window.gpsCalls')==gps
         assert ('POST','/api/walks') not in calls and ('POST','/api/capture') not in calls
         assert ('POST','/api/live/start') not in calls
-        now=time.time();live={'id':'live','error':None,'points':[{'latitude':54.71+dy,'longitude':20.45+dx,'accuracy':20,'timestamp':now-27+i*9}
+        now=time.time()-90;live={'id':'live','error':None,'points':[{'latitude':54.71+dy,'longitude':20.45+dx,'accuracy':20,'timestamp':now-27+i*9}
             for i,(dx,dy) in enumerate([(0,0),(.001,0),(.001,.001),(0,0)])]}
         live['trackingByMe']=False
         page.reload(wait_until='networkidle');page.locator('#live-panel').wait_for(state='visible')
         assert page.locator('#live-capture').is_disabled()
         assert 'другого аккаунта' in page.locator('#live-status').inner_text()
         live['trackingByMe']=True
+        stored_completion=False
         page.reload(wait_until='networkidle');page.locator('#live-panel').wait_for(state='visible')
+        assert 'дождитесь свежей точки' in page.locator('#live-status').inner_text()
+        assert page.locator('#live-capture').is_disabled()
+        stored_completion=True
+        page.reload(wait_until='networkidle');page.locator('#live-panel').wait_for(state='visible')
+        assert 'дождитесь свежей точки' not in page.locator('#live-status').inner_text()
+        assert page.locator('#live-capture').is_enabled()
         page.locator('#live-capture').click();page.locator('#live-panel').wait_for(state='hidden')
         assert page.locator('#status').inner_text()=='Ай яй яй, захват аннулирован, играй честно'
         page.reload(wait_until='networkidle')
@@ -384,7 +392,7 @@ def main():
         assert page.locator('#delete-pet').is_hidden()
         assert 'Новую анкету создавать не нужно' in page.locator('#status').inner_text()
         assert not errors,errors
-        browser.close();print('v.1.1.1 UI OK: общий аккаунт, полноэкранный горизонтальный штаб, породные иллюстрации, живые маршруты только из Telegram, чат/плашка, суточный доход, камуфляжи, комиксный интерфейс, покупки и уведомления.')
+        browser.close();print('UI OK: завершение сохранённого трека и совместимость схем, общий аккаунт, полноэкранный горизонтальный штаб, породные иллюстрации, живые маршруты только из Telegram, чат/плашка, суточный доход, камуфляжи, комиксный интерфейс, покупки и уведомления.')
 
 
 if __name__=='__main__':main()

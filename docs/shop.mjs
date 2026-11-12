@@ -1,4 +1,4 @@
-import { formatBones, fullBones } from "./numbers.mjs?v=1.1.2";
+import { formatBones, fullBones } from "./numbers.mjs?v=1.1.3";
 export function createShop({ api, context, telegram, onPaid, message }) {
   const $ = (id) => document.getElementById(id);
   let buying = false, requestId = null, selected = null;
