@@ -571,7 +571,7 @@ export function createHandler(deps: Dependencies) {
         } catch { /* старую БД нельзя объявлять готовой */ }
       }
       return {
-        version: "1.1.4",
+        version: "1.1.5",
         features,
         demoMode: false,
         closureMeters: features.closureMeters ?? 15,
@@ -621,7 +621,13 @@ export function createHandler(deps: Dependencies) {
           "Установите SQL 202611130001_unlimited_walks.sql после v.1.1.3.",
         );
       }
-      return { ok: true, version: "1.1.4" };
+      if (!capabilities.safeSyncRevision) {
+        throw new ApiError(
+          503,
+          "Установите SQL 202611160001_sync_revision_where.sql после v.1.1.4.",
+        );
+      }
+      return { ok: true, version: "1.1.5" };
     }
     const authorization = req.headers.get("Authorization") ?? "";
     if (!authorization.startsWith("tma ")) {

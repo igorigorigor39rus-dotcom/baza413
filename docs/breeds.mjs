@@ -1,8 +1,8 @@
-import { dogPortrait } from "./dog.mjs?v=1.1.4";
+import { dogPortrait } from "./dog.mjs?v=1.1.5";
 let catalogPromise;
 export function getBreeds() {
   return catalogPromise ??= fetch(
-    new URL("./assets/breeds.json?v=1.1.4", import.meta.url),
+    new URL("./assets/breeds.json?v=1.1.5", import.meta.url),
   ).then((r) => {
     if (!r.ok) throw new Error("Не удалось загрузить список пород.");
     return r.json();

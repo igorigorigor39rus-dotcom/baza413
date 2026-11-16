@@ -1,6 +1,8 @@
-# DogWars. Захвати мир! · v.1.1.4
+# DogWars. Захвати мир! · v.1.1.5
 
-**Для работающей v.1.1.3: [инструкция обновления v.1.1.4](guide/UPDATE_V1_1_4.md). Сначала выполните один новый SQL, затем загрузите `paws-api`.** Публикация GitHub не обновляет Supabase автоматически.
+**Для работающей v.1.1.4: [инструкция обновления v.1.1.5](guide/UPDATE_V1_1_5.md). Исправляется ошибка 21000 при сохранении территории; нужны один новый SQL и новая `paws-api`.** Публикация GitHub не обновляет Supabase автоматически.
+
+В v.1.1.5 исправлен запрос служебного счётчика карты/чата: защитный модуль Supabase `safeupdate` отклонял его с кодом `21000` и сообщением `UPDATE requires a WHERE clause`. Счётчик теперь обновляется по ключу `id=true`; защита остаётся включённой.
 
 В v.1.1.4 снят лимит длительности прогулки. Сохранённый замкнутый трек можно захватить после остановки или истечения срока трансляции. Запуск другого игрока не удаляет старую активную прогулку. Ошибки БД показывают проверенный код, а диагностический SQL выполняет пробный захват с откатом.
 
@@ -35,7 +37,7 @@
 - Изменение владельцев — атомарная операция PostgreSQL. Повтор захвата после потери ответа возвращает прежний результат, а не создаёт дубликат.
 - Штаб: 10 уровней, анимированный питомец, серверное списание стоимости улучшений. Демо и обход входа через `?demo=1` удалены.
 
-**[Скачать архив обновления v.1.1.4](https://github.com/igorigorigor39rus-dotcom/baza413/releases/download/v.1.1.4/baza413-v.1.1.4.zip).** Распакуйте его в новую папку. Исходные PNG иллюстраций доступны в полном Source code ZIP на [странице релиза](https://github.com/igorigorigor39rus-dotcom/baza413/releases/tag/v.1.1.4). Сайт GitHub Pages публикуется из `prototype` / `docs`; SQL и Edge Function обновляются отдельно.
+**[Скачать архив обновления v.1.1.5](https://github.com/igorigorigor39rus-dotcom/baza413/releases/download/v.1.1.5/baza413-v.1.1.5.zip).** Распакуйте его в новую папку. Исходные PNG иллюстраций доступны в полном Source code ZIP на [странице релиза](https://github.com/igorigorigor39rus-dotcom/baza413/releases/tag/v.1.1.5). Сайт GitHub Pages публикуется из `prototype` / `docs`; SQL и Edge Function обновляются отдельно.
 
 ## Шаг 1. Включите GitHub Pages
 
@@ -58,7 +60,7 @@
 1. Откройте **SQL Editor → New query**.
 2. Скопируйте **весь** файл [supabase/migrations/202611050001_paws.sql](supabase/migrations/202611050001_paws.sql).
 3. Вставьте SQL и нажмите **Run**. Дождитесь успешного завершения.
-4. Для первой установки затем выполните целиком `supabase/migrations/202611080002_v111.sql`, затем `supabase/migrations/202611100001_efficient_sync.sql`, затем `supabase/migrations/202611120001_live_completion.sql`, затем `supabase/migrations/202611130001_unlimited_walks.sql`. Для работающей v.1.1.3 нужен только последний файл и новая Edge Function по инструкции v.1.1.4.
+4. Для первой установки затем выполните целиком `supabase/migrations/202611080002_v111.sql`, затем `supabase/migrations/202611100001_efficient_sync.sql`, затем `supabase/migrations/202611120001_live_completion.sql`, затем `supabase/migrations/202611130001_unlimited_walks.sql`, затем `supabase/migrations/202611160001_sync_revision_where.sql`. Для работающей v.1.1.4 нужен только последний файл и новая Edge Function по инструкции v.1.1.5.
 
 Каждый SQL-файл выполняется одной транзакцией. Создаются отдельная схема `paws`, таблицы, RPC-функции с префиксом `paws_` и bucket `paws-photos`. Существующие таблицы вне этой схемы не удаляются. Миграция рассчитана на новую схему приложения; если у вас уже есть несвязанная схема `paws`, остановитесь и согласуйте другое имя.
 
@@ -159,6 +161,7 @@ python3.12 scripts/configure_supabase_bot.py
 | `supabase/migrations/202611080002_v111.sql` | Накопительное обновление, справочник пород и атомарные улучшения штаба. |
 | `supabase/migrations/202611120001_live_completion.sql` | Завершение сохранённого Telegram-трека без 15-секундного порога; прежние проверки маршрута сохранены. |
 | `supabase/migrations/202611130001_unlimited_walks.sql` | Убирает лимит времени из захвата, синхронизации и очистки; разрешает завершить записанный трек после остановки трансляции. |
+| `supabase/migrations/202611160001_sync_revision_where.sql` | Исправляет ошибку 21000 в триггере служебного счётчика при включённом safeupdate. |
 | `supabase/functions/paws-api/auth.ts` | Проверка подписи Telegram и webhook-секрета. |
 | `supabase/functions/paws-api/handler.ts` | API, команды бота, проверка данных, фото и вызовы RPC. |
 | `supabase/migrations/202611050001_paws.sql` | PostGIS, закрытые таблицы и транзакции перезахвата. |

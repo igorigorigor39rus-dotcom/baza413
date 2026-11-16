@@ -90,6 +90,7 @@ function fixture(
               storedLiveCompletion: true,
               unlimitedWalkDuration: true,
               recordedFinishAfterStop: true,
+              safeSyncRevision: true,
               sharedPet: true,
               unlimitedGpsGap: true,
               landscapeHQ: true,
@@ -452,7 +453,7 @@ Deno.test("готовность проверяет БД, а не обещает 
   const r = await handler(new Request(`${BASE}/paws-api/api/config`));
   const config = await r.json();
   assert(
-    config.version === "1.1.4" && config.features.chat === false &&
+    config.version === "1.1.5" && config.features.chat === false &&
       config.features.dossier === false,
   );
 });
@@ -1386,7 +1387,7 @@ Deno.test("v112: обновлённая функция сохраняет ста
   const config =
     await (await olderDatabase.handler(await request("/api/config"))).json();
   assert(
-    config.version === "1.1.4" && !config.features.efficientSync &&
+    config.version === "1.1.5" && !config.features.efficientSync &&
       config.features.liveTracking,
   );
   assert(
@@ -1682,7 +1683,29 @@ Deno.test("v114: health requires unlimited-walk SQL and config remains readable 
         ),
     );
     const config = await older.handler(await request("/api/config"));
-    assert(config.status === 200 && (await config.json()).version === "1.1.4");
+    assert(config.status === 200 && (await config.json()).version === "1.1.5");
   }
   assert((await ready.handler(await request("/health"))).status === 200);
+});
+
+Deno.test("v115: health verifies safeupdate SQL while config remains available", async () => {
+  const ready = fixture();
+  const flags =
+    (await (await ready.handler(await request("/api/config"))).json()).features;
+  delete flags.safeSyncRevision;
+  const older = fixture((url) =>
+    Response.json(
+      url.endsWith("/paws_capabilities") ? flags : { pet: null, area: 0 },
+    )
+  );
+  const health = await older.handler(await request("/health"));
+  assert(
+    health.status === 503 &&
+      (await health.json()).detail.includes(
+        "202611160001_sync_revision_where.sql",
+      ),
+  );
+  assert((await older.handler(await request("/api/config"))).status === 200);
+  const current = await ready.handler(await request("/health"));
+  assert(current.status === 200 && (await current.json()).version === "1.1.5");
 });
